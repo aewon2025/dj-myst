@@ -371,11 +371,10 @@ export default function App() {
 
   const togglePlay = (deck: 'A' | 'B') => {
     if (!trackInfo[deck].url || loadingState[deck]) return;
-    const targetPlay = !playingState[deck];
     if (deckSources[deck] === 'AUDIO') {
-      audioEngine.setPlaybackState(deck, targetPlay);
+      audioEngine.playPause(deck);
     }
-    setPlayingState(prev => ({ ...prev, [deck]: targetPlay }));
+    setPlayingState(prev => ({ ...prev, [deck]: !prev[deck] }));
   };
 
   const handleEqChange = (deck: 'A' | 'B', band: 'low' | 'mid' | 'high', val: number) => {
@@ -559,7 +558,7 @@ export default function App() {
     try {
       const isCurrentlyPlaying = playingState[deck];
       if (isCurrentlyPlaying) {
-        audioEngine.setPlaybackState(deck, false);
+        audioEngine.playPause(deck);
         setPlayingState(prev => ({ ...prev, [deck]: false }));
         audioEngine.seek(deck, cuePointsRef.current[deck]);
       } else {
@@ -574,7 +573,7 @@ export default function App() {
         
         setIsCueActive(prev => ({ ...prev, [deck]: true }));
         audioEngine.seek(deck, activeCue);
-        audioEngine.setPlaybackState(deck, true);
+        audioEngine.playPause(deck);
       }
     } catch (e) {
       console.error(`Cue press error on deck ${deck}:`, e);
@@ -585,11 +584,9 @@ export default function App() {
     if (!trackInfo[deck].url || loadingState[deck] || deckSources[deck] === 'EXTERNAL') return;
     try {
       if (isCueActive[deck]) {
+        audioEngine.playPause(deck);
+        audioEngine.seek(deck, cuePointsRef.current[deck]);
         setIsCueActive(prev => ({ ...prev, [deck]: false }));
-        if (!playingState[deck]) {
-          audioEngine.setPlaybackState(deck, false);
-          audioEngine.seek(deck, cuePointsRef.current[deck]);
-        }
       }
     } catch (e) {
       console.error(`Cue release error on deck ${deck}:`, e);
@@ -621,7 +618,7 @@ export default function App() {
     try {
       wasPlayingBeforeScratch.current[deck] = playingState[deck];
       if (playingState[deck]) {
-        audioEngine.setPlaybackState(deck, false);
+        audioEngine.stop(deck);
       }
     } catch (e) {
       console.error(`Scratch start error on deck ${deck}:`, e);
@@ -632,7 +629,7 @@ export default function App() {
     if (deckSources[deck] === 'EXTERNAL') return;
     try {
       if (wasPlayingBeforeScratch.current[deck]) {
-        audioEngine.setPlaybackState(deck, true);
+        audioEngine.playPause(deck);
       }
     } catch (e) {
       console.error(`Scratch end error on deck ${deck}:`, e);
@@ -1269,8 +1266,6 @@ export default function App() {
                   isLoading={loadingState.A}
                   onPlayerReady={() => setLoadingState(prev => ({ ...prev, A: false }))}
                   onPlayerBuffer={() => setLoadingState(prev => ({ ...prev, A: true }))}
-                  onPlayerPlay={() => setPlayingState(prev => ({ ...prev, A: true }))}
-                  onPlayerPause={() => setPlayingState(prev => ({ ...prev, A: false }))}
                   onPlayPause={() => togglePlay('A')}
                   onSync={() => handleSync('A')}
                   isSynced={syncActive.A && playingState.A && playingState.B && !!trackInfo.A.url && !!trackInfo.B.url}
@@ -1339,8 +1334,6 @@ export default function App() {
                 isLoading={loadingState.B}
                 onPlayerReady={() => setLoadingState(prev => ({ ...prev, B: false }))}
                 onPlayerBuffer={() => setLoadingState(prev => ({ ...prev, B: true }))}
-                onPlayerPlay={() => setPlayingState(prev => ({ ...prev, B: true }))}
-                onPlayerPause={() => setPlayingState(prev => ({ ...prev, B: false }))}
                 onPlayPause={() => togglePlay('B')}
                 onSync={() => handleSync('B')}
                 isSynced={syncActive.B && playingState.A && playingState.B && !!trackInfo.A.url && !!trackInfo.B.url}

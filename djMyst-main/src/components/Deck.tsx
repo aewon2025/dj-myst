@@ -282,8 +282,6 @@ interface DeckProps {
   onScratchEnd?: () => void;
   onPlayerReady?: () => void;
   onPlayerBuffer?: () => void;
-  onPlayerPlay?: () => void;
-  onPlayerPause?: () => void;
   isSynced?: boolean;
 }
 
@@ -515,8 +513,7 @@ export default function Deck({
   keyLock, onKeyLockToggle, gain = 1, onGainChange, hotCues = [], onHotCue, onClearCues,
   loop, onLoopIn, onLoopOut, onExitLoop, resolvedVolume = 1,
   onRewind, onCuePress, onCueRelease, isCueActive = false, onReverseToggle, isReversed = false,
-  onScratchDrag, onScratchStart, onScratchEnd, onPlayerReady, onPlayerBuffer, isSynced = false,
-  onPlayerPlay, onPlayerPause
+  onScratchDrag, onScratchStart, onScratchEnd, onPlayerReady, onPlayerBuffer, isSynced = false
 }: DeckProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fxViewMode, setFxViewMode] = useState<'KNOBS' | 'SLIDERS' | 'XY_PAD'>('KNOBS');
@@ -556,8 +553,6 @@ export default function Deck({
               onBuffer={onPlayerBuffer}
               onBufferEnd={onPlayerReady}
               onError={onPlayerReady}
-              onPlay={onPlayerPlay}
-              onPause={onPlayerPause}
               config={{
                 youtube: {
                   playerVars: {
@@ -565,7 +560,7 @@ export default function Deck({
                     playsinline: 1,
                     controls: 1,
                     enablejsapi: 1,
-                    origin: window.location.origin && window.location.origin !== 'null' ? window.location.origin : undefined
+                    origin: window.location.origin
                   }
                 }
               }}
@@ -577,11 +572,8 @@ export default function Deck({
               <div className="flex items-center justify-center gap-1.5 text-amber-500 text-[9px] font-black uppercase tracking-wider">
                 <AlertTriangle size={12} className="animate-pulse" /> Iframe Sandbox Restrictions
               </div>
-              <p className="text-[10px] text-zinc-350 leading-normal max-w-xs">
-                Browsers block audio contexts inside third-party embeds (like YouTube) when nested in preview windows.
-              </p>
-              <p className="text-[10px] text-emerald-400 font-semibold leading-normal max-w-xs bg-emerald-950/20 px-2 py-1.5 rounded border border-emerald-500/10">
-                💡 TIP: Click directly on the video's native Play or Volume buttons inside the box above to immediately unblock full sound and auto-sync the deck!
+              <p className="text-[10px] text-zinc-300 leading-normal max-w-xs">
+                Browsers block audio contexts and intercept clicks inside third-party embeds (like YouTube) when they are nested inside preview windows.
               </p>
               <a 
                 href={window.location.href} 

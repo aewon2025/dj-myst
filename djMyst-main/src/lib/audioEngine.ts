@@ -425,32 +425,23 @@ export class AudioEngine {
     }
   }
 
-  setPlaybackState(deck: 'A' | 'B', play: boolean) {
-    const player = this.getDeck(deck);
-    if (play) {
-      if (player.state !== 'started') {
-        try {
-          if (player.buffer && player.buffer.loaded && player.buffer.duration > 0) {
-            this.playStartTime[deck] = Tone.now();
-            player.start(undefined, this.playOffset[deck] % player.buffer.duration);
-          } else {
-            console.warn(`Deck ${deck} buffer not ready`);
-          }
-        } catch (e) {
-          console.error(`Error starting deck ${deck}:`, e);
-        }
-      }
-    } else {
-      if (player.state === 'started') {
-        this.playOffset[deck] += (Tone.now() - this.playStartTime[deck]) * player.playbackRate;
-        player.stop();
-      }
-    }
-  }
-
   playPause(deck: 'A' | 'B') {
     const player = this.getDeck(deck);
-    this.setPlaybackState(deck, player.state !== 'started');
+    if (player.state === 'started') {
+      this.playOffset[deck] += (Tone.now() - this.playStartTime[deck]) * player.playbackRate;
+      player.stop();
+    } else {
+      try {
+        if (player.buffer && player.buffer.loaded && player.buffer.duration > 0) {
+          this.playStartTime[deck] = Tone.now();
+          player.start(undefined, this.playOffset[deck] % player.buffer.duration);
+        } else {
+          console.warn(`Deck ${deck} buffer not ready`);
+        }
+      } catch (e) {
+        console.error(`Error starting deck ${deck}:`, e);
+      }
+    }
   }
 
   seek(deck: 'A' | 'B', time: number) {
