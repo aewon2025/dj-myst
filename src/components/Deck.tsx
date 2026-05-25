@@ -285,6 +285,7 @@ interface DeckProps {
   onPlayerPlay?: () => void;
   onPlayerPause?: () => void;
   onEject?: () => void;
+  onSkip?: (seconds: number) => void;
   isSynced?: boolean;
 }
 
@@ -517,7 +518,7 @@ export default function Deck({
   loop, onLoopIn, onLoopOut, onExitLoop, resolvedVolume = 1,
   onRewind, onCuePress, onCueRelease, isCueActive = false, onReverseToggle, isReversed = false,
   onScratchDrag, onScratchStart, onScratchEnd, onPlayerReady, onPlayerBuffer, isSynced = false,
-  onPlayerPlay, onPlayerPause, onEject
+  onPlayerPlay, onPlayerPause, onEject, onSkip
 }: DeckProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fxViewMode, setFxViewMode] = useState<'KNOBS' | 'SLIDERS' | 'XY_PAD'>('KNOBS');
@@ -1031,7 +1032,7 @@ export default function Deck({
             <div className="flex gap-1.5 items-center justify-center">
                 {/* Fast Rewind button */}
                 <button 
-                    onClick={() => onScratchDrag?.(-10)}
+                    onClick={() => onSkip?.(-10)}
                     className="w-8 h-8 rounded-full border border-white/10 bg-white/5 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20 active:scale-95 transition-all text-[8px] font-black tactile-button"
                     title="Fast Rewind 10s"
                 >
@@ -1062,7 +1063,7 @@ export default function Deck({
 
                 {/* Fast Forward button */}
                 <button 
-                    onClick={() => onScratchDrag?.(10)}
+                    onClick={() => onSkip?.(10)}
                     className="w-8 h-8 rounded-full border border-white/10 bg-white/5 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20 active:scale-95 transition-all text-[8px] font-black tactile-button"
                     title="Fast Forward 10s"
                 >

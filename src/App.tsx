@@ -668,6 +668,23 @@ export default function App() {
     }
   };
 
+  const handleSkip = (deck: 'A' | 'B', seconds: number) => {
+    if (deckSources[deck] === 'EXTERNAL') return;
+    try {
+      const current = audioEngine.getPosition(deck);
+      const player = audioEngine.getDeck(deck);
+      if (player && player.buffer && player.buffer.loaded) {
+        const duration = player.buffer.duration || 0;
+        let target = current + seconds;
+        if (target < 0) target = 0;
+        if (target > duration) target = duration - 0.05;
+        audioEngine.seek(deck, target);
+      }
+    } catch (e) {
+      console.error(`Error skipping on deck ${deck}:`, e);
+    }
+  };
+
   const handleWaveformSeek = (deck: 'A' | 'B', time: number) => {
     if (deckSources[deck] === 'EXTERNAL') return;
     try {
@@ -1348,6 +1365,7 @@ export default function App() {
                   onScratchStart={() => handleScratchStart('A')}
                   onScratchEnd={() => handleScratchEnd('A')}
                   onEject={() => handleEjectDeck('A')}
+                  onSkip={(sec) => handleSkip('A', sec)}
                 />
           </div>
 
@@ -1419,6 +1437,7 @@ export default function App() {
                 onScratchStart={() => handleScratchStart('B')}
                 onScratchEnd={() => handleScratchEnd('B')}
                 onEject={() => handleEjectDeck('B')}
+                onSkip={(sec) => handleSkip('B', sec)}
               />
           </div>
         </div>
@@ -1839,6 +1858,19 @@ export default function App() {
                      >
                        <Plus size={11} /> Save Track to Tracker Only
                      </button>
+                  </div>
+
+                  {/* WORK IN PROGRESS NOTICE */}
+                  <div className="mt-3 p-4 rounded-lg bg-amber-500/5 border border-amber-500/30 w-full max-w-xl text-left">
+                     <div className="flex items-center gap-2 text-amber-500 text-[10px] font-black tracking-widest uppercase mb-1.5">
+                        <Activity size={12} className="text-amber-500 animate-pulse" /> [ WORK IN PROGRESS ]
+                     </div>
+                     <h5 className="text-[10px] text-amber-400/90 font-bold leading-snug mb-1">
+                        Active Stream Integration Dev Phase
+                     </h5>
+                     <p className="text-[9px] text-zinc-400 leading-relaxed">
+                        While track loading and animated waveforms are mapped, live audio playback for {activeLibraryTab === 'YOUTUBE' ? 'YouTube' : 'Spotify'} streams within sandbox iframe containers is currently a work in progress. We are working diligently to routing-link these outputs for future updates!
+                     </p>
                   </div>
 
                   <div className="mt-2 p-4 rounded-lg bg-orange-500/5 border border-orange-500/20 w-full max-w-xl">
