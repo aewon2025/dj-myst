@@ -135,24 +135,52 @@ function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, o
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (e.touches.length === 0) return;
-    const touch = e.touches[0];
+    const touch = e.changedTouches[0] || e.touches[0];
+    if (!touch) return;
+    const touchId = touch.identifier;
     handleStart(touch.clientX, touch.clientY);
     
     const handleGlobalTouchMove = (moveEvent: TouchEvent) => {
-      if (moveEvent.touches.length === 0) return;
-      const t = moveEvent.touches[0];
-      handleMove(t.clientX, t.clientY);
+      let trackedTouch = null;
+      for (let i = 0; i < moveEvent.touches.length; i++) {
+        if (moveEvent.touches[i].identifier === touchId) {
+          trackedTouch = moveEvent.touches[i];
+          break;
+        }
+      }
+      if (trackedTouch) {
+        handleMove(trackedTouch.clientX, trackedTouch.clientY);
+      }
     };
     
-    const handleGlobalTouchEnd = () => {
-      handleEnd();
-      document.removeEventListener('touchmove', handleGlobalTouchMove);
-      document.removeEventListener('touchend', handleGlobalTouchEnd);
+    const handleGlobalTouchEnd = (endEvent: TouchEvent) => {
+      let isStillTracking = false;
+      for (let i = 0; i < endEvent.touches.length; i++) {
+        if (endEvent.touches[i].identifier === touchId) {
+          isStillTracking = true;
+          break;
+        }
+      }
+      let touchEnded = false;
+      if ('changedTouches' in endEvent) {
+        for (let i = 0; i < endEvent.changedTouches.length; i++) {
+          if (endEvent.changedTouches[i].identifier === touchId) {
+            touchEnded = true;
+            break;
+          }
+        }
+      }
+      if (!isStillTracking || touchEnded) {
+        handleEnd();
+        document.removeEventListener('touchmove', handleGlobalTouchMove);
+        document.removeEventListener('touchend', handleGlobalTouchEnd);
+        document.removeEventListener('touchcancel', handleGlobalTouchEnd);
+      }
     };
     
-    document.addEventListener('touchmove', handleGlobalTouchMove);
+    document.addEventListener('touchmove', handleGlobalTouchMove, { passive: false });
     document.addEventListener('touchend', handleGlobalTouchEnd);
+    document.addEventListener('touchcancel', handleGlobalTouchEnd);
   };
 
   return (
@@ -301,7 +329,7 @@ interface InteractiveSliderProps {
 function InteractiveSlider({ label, value, min, max, onChange, color }: InteractiveSliderProps) {
   const [isDragging, setIsDragging] = useState(false);
   
-  const handleStart = (e: React.MouseEvent | React.TouchEvent, clientY: number) => {
+  const handleStart = (e: React.MouseEvent | React.TouchEvent, clientY: number, touchId: number | null) => {
     e.preventDefault();
     setIsDragging(true);
     const rect = e.currentTarget.parentElement?.getBoundingClientRect();
@@ -322,21 +350,59 @@ function InteractiveSlider({ label, value, min, max, onChange, color }: Interact
 
     const handleTouchMove = (moveEvent: TouchEvent) => {
       if (moveEvent.cancelable) moveEvent.preventDefault();
-      updateValue(moveEvent.touches[0].clientY);
+      let trackedTouch = null;
+      for (let i = 0; i < moveEvent.touches.length; i++) {
+        if (moveEvent.touches[i].identifier === touchId) {
+          trackedTouch = moveEvent.touches[i];
+          break;
+        }
+      }
+      if (trackedTouch) {
+        updateValue(trackedTouch.clientY);
+      }
     };
 
-    const handleStop = () => {
-      setIsDragging(false);
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleStop);
-      window.removeEventListener('touchmove', handleTouchMove);
-      window.removeEventListener('touchend', handleStop);
+    const handleStop = (stopEvent: MouseEvent | TouchEvent) => {
+      if (touchId !== null && 'touches' in stopEvent) {
+        let isStillTracking = false;
+        for (let i = 0; i < stopEvent.touches.length; i++) {
+          if (stopEvent.touches[i].identifier === touchId) {
+            isStillTracking = true;
+            break;
+          }
+        }
+        let touchEnded = false;
+        if ('changedTouches' in stopEvent) {
+          for (let i = 0; i < stopEvent.changedTouches.length; i++) {
+            if (stopEvent.changedTouches[i].identifier === touchId) {
+              touchEnded = true;
+              break;
+            }
+          }
+        }
+        if (!isStillTracking || touchEnded) {
+          setIsDragging(false);
+          window.removeEventListener('mousemove', handleMove);
+          window.removeEventListener('mouseup', handleStop);
+          window.removeEventListener('touchmove', handleTouchMove);
+          window.removeEventListener('touchend', handleStop);
+          window.removeEventListener('touchcancel', handleStop);
+        }
+      } else {
+        setIsDragging(false);
+        window.removeEventListener('mousemove', handleMove);
+        window.removeEventListener('mouseup', handleStop);
+        window.removeEventListener('touchmove', handleTouchMove);
+        window.removeEventListener('touchend', handleStop);
+        window.removeEventListener('touchcancel', handleStop);
+      }
     };
 
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleStop);
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleStop);
+    window.addEventListener('touchcancel', handleStop);
   };
 
   const percentage = ((value - min) / (max - min)) * 100;
@@ -351,8 +417,13 @@ function InteractiveSlider({ label, value, min, max, onChange, color }: Interact
       <div className="relative h-20 w-10 bg-black/35 border border-white/5 rounded-md flex items-center justify-center p-1">
         <div 
           className="relative h-full w-4 flex items-center justify-center cursor-pointer"
-          onMouseDown={(e) => handleStart(e, e.clientY)}
-          onTouchStart={(e) => handleStart(e, e.touches[0].clientY)}
+          onMouseDown={(e) => handleStart(e, e.clientY, null)}
+          onTouchStart={(e) => {
+            const touch = e.changedTouches[0] || e.touches[0];
+            if (touch) {
+              handleStart(e, touch.clientY, touch.identifier);
+            }
+          }}
           onDoubleClick={() => onChange(min)}
           title="Drag vertical fader. Double-tap/click to clear."
         >
@@ -427,8 +498,12 @@ function XYPad({ fx, onFxChange, accentColor }: XYPadProps) {
       onFxChange?.('flanger', yNorm * 0.8);
     };
 
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    const isTouchEvent = 'touches' in e;
+    const touch = isTouchEvent ? ((e as React.TouchEvent).changedTouches[0] || (e as React.TouchEvent).touches[0]) : null;
+    const touchId = touch ? touch.identifier : null;
+
+    const clientX = touch ? touch.clientX : (e as React.MouseEvent).clientX;
+    const clientY = touch ? touch.clientY : (e as React.MouseEvent).clientY;
     updatePoint(clientX, clientY);
 
     const handleMove = (moveEvent: MouseEvent) => {
@@ -437,21 +512,62 @@ function XYPad({ fx, onFxChange, accentColor }: XYPadProps) {
 
     const handleTouchMove = (moveEvent: TouchEvent) => {
       if (moveEvent.cancelable) moveEvent.preventDefault();
-      updatePoint(moveEvent.touches[0].clientX, moveEvent.touches[0].clientY);
+      let trackedTouch = null;
+      for (let i = 0; i < moveEvent.touches.length; i++) {
+        if (moveEvent.touches[i].identifier === touchId) {
+          trackedTouch = moveEvent.touches[i];
+          break;
+        }
+      }
+      if (trackedTouch) {
+        updatePoint(trackedTouch.clientX, trackedTouch.clientY);
+      }
     };
 
-    const handleStop = () => {
-      setIsPressing(false);
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleStop);
-      window.removeEventListener('touchmove', handleTouchMove);
-      window.removeEventListener('touchend', handleStop);
+    const handleStop = (stopEvent: MouseEvent | TouchEvent) => {
+      if (touchId !== null && 'touches' in stopEvent) {
+        let isStillTracking = false;
+        for (let i = 0; i < stopEvent.touches.length; i++) {
+          if (stopEvent.touches[i].identifier === touchId) {
+            isStillTracking = true;
+            break;
+          }
+        }
+        let touchEnded = false;
+        if ('changedTouches' in stopEvent) {
+          for (let i = 0; i < stopEvent.changedTouches.length; i++) {
+            if (stopEvent.changedTouches[i].identifier === touchId) {
+              touchEnded = true;
+              break;
+            }
+          }
+        }
+        if (!isStillTracking || touchEnded) {
+          setIsPressing(false);
+          window.removeEventListener('mousemove', handleMove);
+          window.removeEventListener('mouseup', handleStop);
+          window.removeEventListener('touchmove', handleTouchMove);
+          window.removeEventListener('touchend', handleStop);
+          window.removeEventListener('touchcancel', handleStop);
+        }
+      } else if (!('touches' in stopEvent)) {
+        setIsPressing(false);
+        window.removeEventListener('mousemove', handleMove);
+        window.removeEventListener('mouseup', handleStop);
+        window.removeEventListener('touchmove', handleTouchMove);
+        window.removeEventListener('touchend', handleStop);
+        window.removeEventListener('touchcancel', handleStop);
+      }
     };
 
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleStop);
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
-    window.addEventListener('touchend', handleStop);
+    if (isTouchEvent) {
+      window.addEventListener('touchmove', handleTouchMove, { passive: false });
+      window.addEventListener('touchend', handleStop);
+      window.addEventListener('touchcancel', handleStop);
+    } else {
+      window.addEventListener('mousemove', handleMove);
+      window.addEventListener('mouseup', handleStop);
+    }
   };
 
   const handleReset = () => {
