@@ -264,7 +264,7 @@ interface DeckProps {
   gain?: number;
   onGainChange?: (val: number) => void;
   hotCues?: number[];
-  onHotCue?: (index: number) => void;
+  onHotCue?: (index: number, action?: 'TRIGGER' | 'CLEAR') => void;
   onClearCues?: () => void;
   loop?: { in: number | null, active: boolean };
   onLoopIn?: () => void;
@@ -507,6 +507,118 @@ function XYPad({ fx, onFxChange, accentColor }: XYPadProps) {
         <div className="absolute top-1 right-1.5 text-[5px] font-mono text-white/10 uppercase">MAX SWEEP</div>
       </div>
     </div>
+  );
+}
+
+interface HotCueButtonProps {
+  index: number;
+  hasCue: boolean;
+  cueTime?: number;
+  glowClass: string;
+  formatTime: (sec: number) => string;
+  onHotCue?: (index: number, action?: 'TRIGGER' | 'CLEAR') => void;
+}
+
+function HotCueButton({ index, hasCue, cueTime, glowClass, formatTime, onHotCue }: HotCueButtonProps) {
+  const [isHolding, setIsHolding] = useState(false);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const wasTriggeredRef = useRef(false);
+  const hadCueOnStartRef = useRef(false);
+  const hasTouchRef = useRef(false);
+
+  const startPress = (e: React.MouseEvent | React.TouchEvent) => {
+    if (e.type === 'mousedown') {
+      if ((e as React.MouseEvent).button !== 0) return; // Only primary clicks
+      if (hasTouchRef.current) return; // Avoid double triggering on hybrid devices
+    } else if (e.type === 'touchstart') {
+      hasTouchRef.current = true;
+    }
+
+    hadCueOnStartRef.current = hasCue;
+    wasTriggeredRef.current = false;
+
+    // Trigger instantly for standard DJ zero-latency feel
+    onHotCue?.(index, 'TRIGGER');
+
+    if (hasCue) {
+      setIsHolding(true);
+      timerRef.current = setTimeout(() => {
+        onHotCue?.(index, 'CLEAR');
+        setIsHolding(false);
+        wasTriggeredRef.current = true;
+        
+        // Tactile Haptic feedback if supported on mobile
+        if ('vibrate' in navigator) {
+          try {
+            navigator.vibrate(50);
+          } catch (err) {}
+        }
+      }, 700);
+    }
+  };
+
+  const endPress = (e: React.MouseEvent | React.TouchEvent) => {
+    if (e.type === 'touchend') {
+      setTimeout(() => {
+        hasTouchRef.current = false;
+      }, 300);
+    }
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsHolding(false);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  return (
+    <button
+      onMouseDown={startPress}
+      onMouseUp={(e) => endPress(e)}
+      onMouseLeave={(e) => endPress(e)}
+      onTouchStart={startPress}
+      onTouchEnd={(e) => endPress(e)}
+      onTouchCancel={(e) => endPress(e)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onHotCue?.(index, 'CLEAR');
+      }}
+      title={hasCue ? `Jump to Cue ${index + 1} (${formatTime(cueTime || 0)}) — Hold to clear, Right-click to clear` : `Set Cue ${index + 1} at current position`}
+      className={`h-9 border rounded-sm transition-all tactile-button flex flex-col items-center justify-center leading-none relative overflow-hidden select-none active:scale-95 ${hasCue ? glowClass : 'bg-white/5 border-white/5 text-white/20 hover:bg-white/10'}`}
+    >
+      <style>{`
+        @keyframes cueWipeFill {
+          from { width: 0%; }
+          to { width: 100%; }
+        }
+      `}</style>
+      
+      {/* Wipe Fill overlay indicator for deletion timer */}
+      {isHolding && (
+        <div 
+          className="absolute inset-y-0 left-0 bg-red-600/30 origin-left"
+          style={{
+            animation: 'cueWipeFill 0.7s linear forwards'
+          }}
+        />
+      )}
+
+      <span className="text-[8px] font-black relative z-10">{index + 1}</span>
+      {hasCue && cueTime !== undefined ? (
+        <span className="text-[7.5px] font-mono font-bold text-white mt-0.5 tracking-tight relative z-10">
+          {formatTime(cueTime)}
+        </span>
+      ) : (
+        <span className="text-[6.5px] font-mono tracking-tighter opacity-30 mt-0.5 relative z-10">
+          EMPTY
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -777,18 +889,17 @@ export default function Deck({
                     <button onClick={onClearCues} className="text-[6px] text-white/10 hover:text-red-500 uppercase font-black tracking-tighter">RESET</button>
                 </div>
                 <div className="grid grid-cols-2 grid-rows-2 gap-1.5">
-                    {[0, 1, 2, 3].map((i) => {
-                        const hasCue = hotCues[i] !== undefined;
-                        return (
-                            <button 
-                                key={i} 
-                                onClick={() => onHotCue?.(i)}
-                                className={`h-7 border rounded-sm transition-all tactile-button ${hasCue ? glowClass : 'bg-white/5 border-white/5 text-white/20 hover:bg-white/10'}`}
-                            >
-                                <span className="text-[8px] font-black">{i + 1}</span>
-                            </button>
-                        );
-                    })}
+                    {[0, 1, 2, 3].map((i) => (
+                        <HotCueButton
+                            key={i}
+                            index={i}
+                            hasCue={hotCues[i] !== undefined}
+                            cueTime={hotCues[i]}
+                            glowClass={glowClass}
+                            formatTime={formatTime}
+                            onHotCue={onHotCue}
+                        />
+                    ))}
                 </div>
             </div>
         </div>

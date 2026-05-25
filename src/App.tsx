@@ -421,7 +421,7 @@ export default function App() {
     setKeyLockState(prev => ({ ...prev, [deck]: newState }));
   };
 
-  const handleHotCue = (deck: 'A' | 'B', index: number) => {
+  const handleHotCue = (deck: 'A' | 'B', index: number, action?: 'TRIGGER' | 'CLEAR') => {
     const trackId = trackInfo[deck].id;
     if (!trackId || deckSources[deck] === 'EXTERNAL') return;
 
@@ -430,6 +430,12 @@ export default function App() {
     setHotCues(prev => {
       const trackCues = [...(prev[trackId] || [])];
       
+      if (action === 'CLEAR') {
+        const nextCues = [...trackCues];
+        nextCues[index] = undefined as any;
+        return { ...prev, [trackId]: nextCues };
+      }
+
       // If cue exists at index, jump to it
       if (trackCues[index] !== undefined) {
         audioEngine.seek(deck, trackCues[index]);
@@ -1348,7 +1354,7 @@ export default function App() {
                   gain={gainState.A}
                   onGainChange={(v) => handleGainChange('A', v)}
                   hotCues={hotCues[trackInfo.A.id || ''] || []}
-                  onHotCue={(i) => handleHotCue('A', i)}
+                  onHotCue={(i, act) => handleHotCue('A', i, act)}
                   onClearCues={() => clearHotCues('A')}
                   loop={loopState.A}
                   onLoopIn={() => handleLoopIn('A')}
@@ -1420,7 +1426,7 @@ export default function App() {
                 gain={gainState.B}
                 onGainChange={(v) => handleGainChange('B', v)}
                 hotCues={hotCues[trackInfo.B.id || ''] || []}
-                onHotCue={(i) => handleHotCue('B', i)}
+                onHotCue={(i, act) => handleHotCue('B', i, act)}
                 onClearCues={() => clearHotCues('B')}
                 loop={loopState.B}
                 onLoopIn={() => handleLoopIn('B')}
