@@ -284,6 +284,7 @@ interface DeckProps {
   onPlayerBuffer?: () => void;
   onPlayerPlay?: () => void;
   onPlayerPause?: () => void;
+  onEject?: () => void;
   isSynced?: boolean;
 }
 
@@ -516,10 +517,56 @@ export default function Deck({
   loop, onLoopIn, onLoopOut, onExitLoop, resolvedVolume = 1,
   onRewind, onCuePress, onCueRelease, isCueActive = false, onReverseToggle, isReversed = false,
   onScratchDrag, onScratchStart, onScratchEnd, onPlayerReady, onPlayerBuffer, isSynced = false,
-  onPlayerPlay, onPlayerPause
+  onPlayerPlay, onPlayerPause, onEject
 }: DeckProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fxViewMode, setFxViewMode] = useState<'KNOBS' | 'SLIDERS' | 'XY_PAD'>('KNOBS');
+
+  const [extDuration, setExtDuration] = useState(0);
+  const [extPlayedSeconds, setExtPlayedSeconds] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [nativeDuration, setNativeDuration] = useState(0);
+
+  // Read native current position
+  useEffect(() => {
+    if (sourceType === 'EXTERNAL') return;
+    
+    let animId: number;
+    const updateTime = () => {
+      setCurrentTime(audioEngine.getPosition(id));
+      animId = requestAnimationFrame(updateTime);
+    };
+    updateTime();
+    
+    return () => cancelAnimationFrame(animId);
+  }, [id, sourceType, isPlaying, trackUrl]);
+
+  // Read native duration
+  useEffect(() => {
+    if (sourceType === 'EXTERNAL') return;
+    
+    const updateDuration = () => {
+      const nativePlayer = audioEngine.getDeck(id);
+      if (nativePlayer && nativePlayer.buffer && nativePlayer.buffer.loaded) {
+        setNativeDuration(nativePlayer.buffer.duration || 0);
+      }
+    };
+    
+    updateDuration();
+    const interval = setInterval(updateDuration, 1000);
+    return () => clearInterval(interval);
+  }, [id, sourceType, trackUrl]);
+
+  const resolvedCurrentTime = sourceType === 'EXTERNAL' ? extPlayedSeconds : currentTime;
+  const resolvedDuration = sourceType === 'EXTERNAL' ? extDuration : nativeDuration;
+
+  const formatTime = (seconds: number) => {
+    if (isNaN(seconds) || seconds === null || seconds < 0) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
   const accentColor = id === 'A' ? 'var(--color-brand-cyan)' : 'var(--color-brand-purple)';
   const glowClass = id === 'A' ? 'active-glow-cyan' : 'active-glow-purple';
 
@@ -529,6 +576,19 @@ export default function Deck({
     <div className={`flex flex-col items-center justify-between py-3 flex-1 h-full relative hardware-panel ${id === 'A' ? 'deck-gradient-a' : 'deck-gradient-b'}`}>
       {sourceType === 'EXTERNAL' && externalUrl && (
         <div className="absolute inset-0 z-40 bg-brand-deep/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center rounded-lg border border-white/10">
+          {onEject && (
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                onEject();
+              }}
+              title="Eject track and reset deck"
+              className="absolute top-3 right-3 p-1 rounded bg-red-950/40 border border-red-500/30 text-red-400 hover:bg-red-500 hover:text-white transition-all active:scale-95 text-[9px] font-black uppercase tracking-wider px-2.5 shadow-[0_4px_12px_rgba(239,68,68,0.2)]"
+            >
+              EJECT
+            </button>
+          )}
+
           <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 border border-blue-500/20 ${glowClass}`}>
             <ExternalLink size={24} />
           </div>
@@ -558,6 +618,8 @@ export default function Deck({
               onError={onPlayerReady}
               onPlay={onPlayerPlay}
               onPause={onPlayerPause}
+              onDuration={(d: number) => setExtDuration(d)}
+              onProgress={(state: { playedSeconds: number }) => setExtPlayedSeconds(state.playedSeconds)}
               config={{
                 youtube: {
                   playerVars: {
@@ -618,18 +680,33 @@ export default function Deck({
         </div>
       )}
 
-      {/* Header Loop Info */}
-      <div className="w-full px-4 flex justify-between items-center z-10">
+      {/* Header Deck Info Grid */}
+      <div className="w-full px-4 grid grid-cols-3 gap-2 items-center z-10 font-mono">
          <div className="flex flex-col">
-            <span className="text-[7px] font-black uppercase tracking-[0.2em] opacity-20">Transport Area</span>
-            <div className="lcd-display text-[11px] font-bold text-brand-cyan min-w-[60px] text-center">
+            <span className="text-[7px] font-black uppercase tracking-[0.2em] opacity-20">STATUS</span>
+            <div className="lcd-display text-[10px] font-bold text-brand-cyan text-center truncate">
                {loop?.active ? 'LOOP ON' : (isLoading ? 'LOADING...' : (isPlaying ? 'PLAYING' : 'READY'))}
             </div>
          </div>
+
+         <div className="flex flex-col items-center">
+            <span className="text-[7px] font-black uppercase tracking-[0.2em] opacity-20">TIME TRACKER</span>
+            <div className="lcd-display text-[10px] font-bold text-emerald-400 text-center tabular-nums font-mono tracking-tight flex flex-col items-center w-full">
+              <span>{formatTime(resolvedCurrentTime)} / {formatTime(resolvedDuration)}</span>
+              {/* Mini visual progress slider */}
+              <div className="w-16 h-1 bg-zinc-950/80 rounded-full overflow-hidden mt-0.5 border border-white/5">
+                <div 
+                  className={`h-full ${id === 'A' ? 'bg-blue-400' : 'bg-purple-400'} transition-all duration-100`}
+                  style={{ width: `${resolvedDuration > 0 ? (resolvedCurrentTime / resolvedDuration) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+         </div>
+
          <div className="flex flex-col items-end">
-            <span className="text-[7px] font-black uppercase tracking-[0.2em] opacity-20">Playback Speed</span>
-            <div className="lcd-display text-[11px] font-bold text-brand-cyan min-w-[60px] text-center tabular-nums">
-               {((playbackRate - 1) * 100).toFixed(2)}%
+            <span className="text-[7px] font-black uppercase tracking-[0.2em] opacity-20 font-sans">SPEED / PITCH</span>
+            <div className="lcd-display text-[10px] font-bold text-brand-cyan text-center tabular-nums">
+               {((playbackRate - 1) * 100).toFixed(1)}%
             </div>
          </div>
       </div>

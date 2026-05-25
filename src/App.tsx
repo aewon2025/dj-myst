@@ -189,6 +189,11 @@ export default function App() {
       setPlayingState(prev => ({ ...prev, [deck]: false }));
       // Set loading state to true for Youtube/Spotify so play button is greyed out/shows loading indicator!
       setLoadingState(prev => ({ ...prev, [deck]: true }));
+      // Robust Fallback: automatically clear loading state for external streams after 2 seconds
+      // so if the sandboxed iframe delays browser ready events, the user is not locked out of interface controls.
+      setTimeout(() => {
+        setLoadingState(prev => ({ ...prev, [deck]: false }));
+      }, 2000);
       return;
     }
 
@@ -282,6 +287,25 @@ export default function App() {
         [deck]: { ...prev[deck], title: `ERROR: ${name.toUpperCase()}` }
       }));
     }
+  };
+
+  const handleEjectDeck = (deck: 'A' | 'B') => {
+    // 1. Reset source back to AUDIO
+    setDeckSources(prev => ({ ...prev, [deck]: 'AUDIO' }));
+    setExternalUrls(prev => ({ ...prev, [deck]: null }));
+    
+    // 2. Clear loading and playing state
+    setLoadingState(prev => ({ ...prev, [deck]: false }));
+    setPlayingState(prev => ({ ...prev, [deck]: false }));
+    
+    // 3. Stop the audio engine
+    audioEngine.stop(deck);
+    
+    // 4. Reset trackInfo to clear buffering state
+    setTrackInfo(prev => ({
+      ...prev,
+      [deck]: { title: 'READY', url: null, id: '', artist: 'None', duration: 0 }
+    }));
   };
 
   const toggleFavorite = (track: { id: string; title: string; artist: string; url: string; isAudius?: boolean }) => {
@@ -631,8 +655,13 @@ export default function App() {
   const handleScratchEnd = (deck: 'A' | 'B') => {
     if (deckSources[deck] === 'EXTERNAL') return;
     try {
+      // Restore normal playbackRate and reverse direction
+      audioEngine.endScratch(deck, reverseStates[deck]);
+      
       if (wasPlayingBeforeScratch.current[deck]) {
         audioEngine.setPlaybackState(deck, true);
+      } else {
+        audioEngine.setPlaybackState(deck, false);
       }
     } catch (e) {
       console.error(`Scratch end error on deck ${deck}:`, e);
@@ -1221,7 +1250,19 @@ export default function App() {
             </div>
             
             {/* Small status badges */}
-            <div className="absolute top-0.5 right-2 z-20 flex gap-2">
+            <div className="absolute top-1 right-2 z-20 flex gap-2 items-center">
+                {trackInfo[deck].url && (
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEjectDeck(deck);
+                      }}
+                      title={`Eject and reset Deck ${deck}`}
+                      className="px-1.5 py-0.5 rounded bg-red-950/40 hover:bg-red-500 hover:text-white border border-red-500/20 text-[7.5px] font-black uppercase tracking-wider transition-all shadow-[0_2px_8px_rgba(239,68,68,0.2)] cursor-pointer"
+                    >
+                      EJECT
+                    </button>
+                )}
                 {playingState[deck] && (
                     <div className="flex items-center gap-1">
                         <Activity size={8} className="text-green-500 animate-pulse" />
@@ -1230,7 +1271,7 @@ export default function App() {
                 )}
             </div>
 
-            {loadingState[deck] && (
+            {loadingState[deck] && deckSources[deck] !== 'EXTERNAL' && (
               <div className="absolute inset-0 z-30 bg-[#070709]/85 backdrop-blur-[3px] flex flex-col items-center justify-center border border-white/5">
                 <div className="flex flex-col items-center gap-2">
                   <div className={`w-5 h-5 border-2 border-t-transparent animate-spin rounded-full ${deck === 'A' ? 'border-blue-400' : 'border-purple-400'}`} />
@@ -1306,6 +1347,7 @@ export default function App() {
                   onScratchDrag={(sec) => handleScratchDrag('A', sec)}
                   onScratchStart={() => handleScratchStart('A')}
                   onScratchEnd={() => handleScratchEnd('A')}
+                  onEject={() => handleEjectDeck('A')}
                 />
           </div>
 
@@ -1376,6 +1418,7 @@ export default function App() {
                 onScratchDrag={(sec) => handleScratchDrag('B', sec)}
                 onScratchStart={() => handleScratchStart('B')}
                 onScratchEnd={() => handleScratchEnd('B')}
+                onEject={() => handleEjectDeck('B')}
               />
           </div>
         </div>
@@ -1656,18 +1699,16 @@ export default function App() {
                                             </button>
                                             <div className="w-[1px] bg-white/10 mx-1" />
                                             <button 
-                                                disabled={loadingState.A}
                                                 onClick={() => loadTrack('A', track.title, track.id, true)} 
-                                                className={`px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[9px] font-bold transition-all ${loadingState.A ? 'opacity-30 cursor-not-allowed' : 'hover:bg-blue-600/40'}`}
+                                                className="px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[9px] font-bold transition-all hover:bg-blue-600/40"
                                             >
-                                                {loadingState.A ? '...' : 'A'}
+                                                {loadingState.A && trackInfo.A.id === track.id ? '...' : 'A'}
                                             </button>
                                             <button 
-                                                disabled={loadingState.B}
                                                 onClick={() => loadTrack('B', track.title, track.id, true)} 
-                                                className={`px-2 py-0.5 rounded bg-purple-600/20 text-purple-400 border border-purple-500/30 text-[9px] font-bold transition-all ${loadingState.B ? 'opacity-30 cursor-not-allowed' : 'hover:bg-purple-600/40'}`}
+                                                className="px-2 py-0.5 rounded bg-purple-600/20 text-purple-400 border border-purple-500/30 text-[9px] font-bold transition-all hover:bg-purple-600/40"
                                             >
-                                                {loadingState.B ? '...' : 'B'}
+                                                {loadingState.B && trackInfo.B.id === track.id ? '...' : 'B'}
                                             </button>
                                         </div>
                                     </td>

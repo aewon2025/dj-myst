@@ -34,6 +34,7 @@ export class AudioEngine {
   
   private playStartTime = { A: 0, B: 0 };
   private playOffset = { A: 0, B: 0 };
+  private lastScratchTime = { A: 0, B: 0 };
   private loopStartTime = { A: 0, B: 0 };
   private loopStartPos = { A: 0, B: 0 };
   private loopEndPos = { A: 0, B: 0 };
@@ -428,23 +429,22 @@ export class AudioEngine {
   setPlaybackState(deck: 'A' | 'B', play: boolean) {
     const player = this.getDeck(deck);
     if (play) {
-      if (player.state !== 'started') {
-        try {
-          if (player.buffer && player.buffer.loaded && player.buffer.duration > 0) {
-            this.playStartTime[deck] = Tone.now();
-            player.start(undefined, this.playOffset[deck] % player.buffer.duration);
-          } else {
-            console.warn(`Deck ${deck} buffer not ready`);
-          }
-        } catch (e) {
-          console.error(`Error starting deck ${deck}:`, e);
+      try {
+        player.stop(); // Safe, force clean start from playOffset
+        if (player.buffer && player.buffer.loaded && player.buffer.duration > 0) {
+          this.playStartTime[deck] = Tone.now();
+          player.start(undefined, this.playOffset[deck] % player.buffer.duration);
+        } else {
+          console.warn(`Deck ${deck} buffer not ready`);
         }
+      } catch (e) {
+        console.error(`Error starting deck ${deck}:`, e);
       }
     } else {
       if (player.state === 'started') {
         this.playOffset[deck] += (Tone.now() - this.playStartTime[deck]) * player.playbackRate;
-        player.stop();
       }
+      player.stop();
     }
   }
 
@@ -674,9 +674,41 @@ export class AudioEngine {
       if (target < 0) target = 0;
       if (target > player.buffer.duration) target = player.buffer.duration - 0.05;
       
-      this.seek(deck, target);
+      this.playOffset[deck] = target;
+      
+      // Dynamic direction and playbackRate mapping for scratching realism
+      const isReverse = deltaSeconds < 0;
+      player.reverse = isReverse;
+      
+      const absDelta = Math.abs(deltaSeconds);
+      const rate = Math.max(0.3, Math.min(3.0, absDelta * 120));
+      player.playbackRate = rate;
+      
+      const now = Tone.now();
+      // Only stop and restart the player segment if at least 45ms has passed since the last trigger,
+      // or if the player is currently stopped. This prevents constant stop() calls cutting off the sound.
+      if (now - this.lastScratchTime[deck] > 0.045 || player.state !== 'started') {
+        player.stop();
+        this.playStartTime[deck] = now;
+        player.start(undefined, target % player.buffer.duration, 0.16); // slightly longer to blend
+        this.lastScratchTime[deck] = now;
+      }
+      
+      if (absDelta > 0.003) {
+        this.scratchWheel(absDelta * 18000);
+      }
     } catch (e) {
       console.warn(`Scratch seek bounds check error on deck ${deck}:`, e);
+    }
+  }
+
+  endScratch(deck: 'A' | 'B', isReversed: boolean) {
+    const player = this.getDeck(deck);
+    try {
+      player.reverse = isReversed;
+      this.applyRate(deck);
+    } catch (e) {
+      console.warn(`Error ending scratch mode on deck ${deck}:`, e);
     }
   }
 
