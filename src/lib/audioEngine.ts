@@ -41,6 +41,11 @@ export class AudioEngine {
   
   private recorder: Tone.Recorder = new Tone.Recorder();
 
+  // Procedural synthesizer engines
+  private synth: Tone.PolySynth | null = null;
+  private delay: Tone.FeedbackDelay | null = null;
+  private acidSynth: Tone.MonoSynth | null = null;
+
   constructor() {
     this.deckA = new Tone.Player();
     this.deckB = new Tone.Player();
@@ -629,6 +634,126 @@ export class AudioEngine {
   }
 
   triggerSample(name: string) {
+    if (name === 'trance_stab') {
+      if (!this.synth) {
+        this.delay = new Tone.FeedbackDelay("1/8n", 0.55).toDestination();
+        this.synth = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: "sawtooth" },
+          envelope: { attack: 0.005, decay: 0.35, sustain: 0.25, release: 0.5 }
+        });
+        this.synth.connect(this.delay);
+      }
+      const chords = [
+        ['D4', 'F4', 'A4', 'C5', 'E5'], // Dm9
+        ['G4', 'A#4', 'D5', 'F5', 'A5'], // Gm9
+        ['C4', 'D#4', 'G4', 'A#4', 'D5'], // Cm9
+        ['A#3', 'D4', 'F4', 'A4', 'C5']  // A#maj9
+      ];
+      const selected = chords[Math.floor(Math.random() * chords.length)];
+      try {
+        this.synth.triggerAttackRelease(selected, "8n");
+      } catch (e) {
+        console.warn(e);
+      }
+      return;
+    }
+
+    if (name === 'acid_line') {
+      if (!this.acidSynth) {
+        this.acidSynth = new Tone.MonoSynth({
+          oscillator: { type: "sawtooth" },
+          filter: { Q: 8, type: "lowpass", rolloff: -12 },
+          envelope: { attack: 0.01, decay: 0.15, sustain: 0.3, release: 0.1 },
+          filterEnvelope: { attack: 0.01, decay: 0.22, baseFrequency: 130, octaves: 4.2, exponent: 2 }
+        }).toDestination();
+      }
+      const now = Tone.now();
+      const scale = ["C3", "D#3", "G3", "A#3", "C4", "A#3", "G3", "F3"];
+      const r1 = scale[Math.floor(Math.random() * scale.length)];
+      const r2 = scale[Math.floor(Math.random() * scale.length)];
+      const r3 = scale[Math.floor(Math.random() * scale.length)];
+      try {
+        this.acidSynth.triggerAttackRelease(r1, "16n", now);
+        this.acidSynth.triggerAttackRelease(r2, "16n", now + 0.12);
+        this.acidSynth.triggerAttackRelease(r3, "16n", now + 0.24);
+        this.acidSynth.triggerAttackRelease("C3", "16n", now + 0.36);
+      } catch (e) {
+        console.warn(e);
+      }
+      return;
+    }
+
+    if (name === 'rave_siren') {
+      try {
+        const osc = new Tone.Oscillator("sawtooth");
+        const filter = new Tone.Filter(1800, "lowpass").toDestination();
+        const gain = new Tone.Gain(0.12).toDestination();
+        osc.connect(filter);
+        filter.connect(gain);
+        
+        const now = Tone.now();
+        osc.frequency.setValueAtTime(260, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 1.2);
+        
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.linearRampToValueAtTime(0, now + 1.4);
+        
+        osc.start(now);
+        osc.stop(now + 1.4);
+      } catch (e) {
+        console.warn(e);
+      }
+      return;
+    }
+
+    if (name === 'sub_drop') {
+      try {
+        const osc = new Tone.Oscillator("sine");
+        const gain = new Tone.Gain(0.26).toDestination();
+        osc.connect(gain);
+        
+        const now = Tone.now();
+        osc.frequency.setValueAtTime(100, now);
+        osc.frequency.exponentialRampToValueAtTime(32, now + 1.6);
+        
+        gain.gain.setValueAtTime(0.26, now);
+        gain.gain.linearRampToValueAtTime(0, now + 1.6);
+        
+        osc.start(now);
+        osc.stop(now + 1.6);
+      } catch (e) {
+        console.warn(e);
+      }
+      return;
+    }
+
+    if (name === 'noise_sweep') {
+      try {
+        const noise = new Tone.Noise("white");
+        const filter = new Tone.Filter({
+          type: "bandpass",
+          Q: 4.5,
+          frequency: 250
+        }).toDestination();
+        const gain = new Tone.Gain(0.14).toDestination();
+        noise.connect(filter);
+        filter.connect(gain);
+        
+        const now = Tone.now();
+        filter.frequency.setValueAtTime(250, now);
+        filter.frequency.exponentialRampToValueAtTime(7500, now + 1.5);
+        
+        gain.gain.setValueAtTime(0.14, now);
+        gain.gain.linearRampToValueAtTime(0, now + 1.6);
+        
+        noise.start(now);
+        noise.stop(now + 1.6);
+      } catch (e) {
+        console.warn(e);
+      }
+      return;
+    }
+
     if (this.sampler.has(name)) {
       const player = this.sampler.player(name);
       // Randomize pitch slightly for more natural repetition

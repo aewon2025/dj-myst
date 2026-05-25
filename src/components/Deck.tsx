@@ -749,6 +749,7 @@ export default function Deck({
   onPlayerPlay, onPlayerPause, onEject, onSkip
 }: DeckProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [advancedTab, setAdvancedTab] = useState<'FX' | 'SAMPLER'>('FX');
   const [fxViewMode, setFxViewMode] = useState<'KNOBS' | 'SLIDERS' | 'XY_PAD'>('KNOBS');
 
   const [extDuration, setExtDuration] = useState(0);
@@ -1026,167 +1027,309 @@ export default function Deck({
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="absolute inset-x-2 top-2 bottom-16 bg-brand-panel/95 backdrop-blur-2xl border border-white/10 z-30 p-4 flex flex-col gap-4 rounded-lg shadow-2xl overflow-y-auto custom-scrollbar"
+            className="absolute inset-x-2 top-2 bottom-16 bg-[#0c0d10]/98 backdrop-blur-2xl border border-white/10 z-30 p-3.5 flex flex-col gap-3.5 rounded-lg shadow-2xl overflow-y-auto custom-scrollbar"
           >
              <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                <div className="text-[8px] font-black uppercase tracking-[0.2em] text-white/40">SPECIALIZED FX ENGINE // {id}</div>
-                <button onClick={() => setShowAdvanced(false)} className="text-[8px] font-bold text-white/20 hover:text-white uppercase transition-colors px-1">Close</button>
+                <div className="text-[8px] font-black uppercase tracking-[0.2em] text-white/40">CONSOLE DECK EXPANSION // {id}</div>
+                <button onClick={() => setShowAdvanced(false)} className="text-[8px] font-bold text-white/20 hover:text-white uppercase transition-colors px-1 pointer-events-auto">Close</button>
+             </div>
+
+             {/* Tab Toggle Control */}
+             <div className="flex bg-black/45 border border-white/5 p-1 rounded gap-1 flex-shrink-0">
+                <button 
+                  onClick={() => setAdvancedTab('FX')} 
+                  className={`flex-grow py-1.5 px-3 rounded text-[8px] font-black uppercase tracking-widest border transition-all text-center flex items-center justify-center gap-1.5 ${
+                    advancedTab === 'FX' 
+                      ? (id === 'A' 
+                        ? 'bg-brand-cyan/15 text-brand-cyan border-brand-cyan/20' 
+                        : 'bg-brand-purple/15 text-brand-purple border-brand-purple/20')
+                      : 'border-transparent text-white/30 hover:text-white/60 hover:bg-white/5'
+                  }`}
+                >
+                  🎛️ SPECIALIZED FX ENGINE
+                </button>
+                <button 
+                  onClick={() => setAdvancedTab('SAMPLER')} 
+                  className={`flex-grow py-1.5 px-3 rounded text-[8px] font-black uppercase tracking-widest border transition-all text-center flex items-center justify-center gap-1.5 ${
+                    advancedTab === 'SAMPLER' 
+                      ? (id === 'A' 
+                        ? 'bg-brand-cyan/15 text-brand-cyan border-brand-cyan/20' 
+                        : 'bg-brand-purple/15 text-brand-purple border-brand-purple/20')
+                      : 'border-transparent text-white/30 hover:text-white/60 hover:bg-white/5'
+                  }`}
+                >
+                  🎹 LIVE SYNTH & SAMPLER
+                </button>
              </div>
              
-             {/* Beat Rolls */}
-             <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <div className="text-[7px] font-black uppercase tracking-widest text-white/20">Beat Roll / Repeat</div>
-                  {sourceType === 'EXTERNAL' && (
-                    <div className="text-[6px] font-black text-amber-500 uppercase tracking-widest leading-none bg-amber-500/10 border border-amber-500/20 px-1 py-0.5 rounded-sm">Local Only</div>
-                  )}
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                    {(['1/4', '1/8', '1/16'] as const).map((div) => (
-                        <button 
-                            key={div}
-                            onClick={() => {
-                              if (sourceType === 'EXTERNAL') return;
-                              if (activeRoll === div) {
-                                onRoll?.(null);
-                              } else {
-                                onRoll?.(div);
-                              }
-                            }}
+             {advancedTab === 'FX' ? (
+               <>
+                 {/* Beat Rolls */}
+                 <div className="space-y-2 flex-shrink-0">
+                    <div className="flex justify-between items-center">
+                      <div className="text-[7px] font-black uppercase tracking-widest text-white/20">Beat Roll / Repeat</div>
+                      {sourceType === 'EXTERNAL' && (
+                        <div className="text-[6px] font-black text-amber-500 uppercase tracking-widest leading-none bg-amber-500/10 border border-amber-500/20 px-1 py-0.5 rounded-sm">Local Only</div>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                        {(['1/4', '1/8', '1/16'] as const).map((div) => (
+                            <button 
+                                key={div}
+                                onClick={() => {
+                                  if (sourceType === 'EXTERNAL') return;
+                                  if (activeRoll === div) {
+                                    onRoll?.(null);
+                                  } else {
+                                    onRoll?.(div);
+                                  }
+                                }}
 
-                            disabled={sourceType === 'EXTERNAL'}
-                            title={sourceType === 'EXTERNAL' ? "Beat rolls are not supported for YouTube/Spotify tracks" : `Toggle ${div} Beat Loop`}
-                            className={`h-8 rounded-sm border text-[8px] font-black transition-all tactile-button ${
-                              sourceType === 'EXTERNAL'
-                                ? 'bg-zinc-900/40 border-white/5 text-zinc-550/40 cursor-not-allowed opacity-40 select-none'
-                                : activeRoll === div 
-                                ? glowClass 
-                                : 'bg-white/5 border-white/10 text-white/30 hover:bg-white/10'
-                            }`}
-                        >
-                            {div}
-                        </button>
+                                disabled={sourceType === 'EXTERNAL'}
+                                title={sourceType === 'EXTERNAL' ? "Beat rolls are not supported for YouTube/Spotify tracks" : `Toggle ${div} Beat Loop`}
+                                className={`h-8 rounded-sm border text-[8px] font-black transition-all tactile-button ${
+                                  sourceType === 'EXTERNAL'
+                                    ? 'bg-zinc-900/40 border-white/5 text-zinc-550/40 cursor-not-allowed opacity-40 select-none'
+                                    : activeRoll === div 
+                                    ? glowClass 
+                                    : 'bg-white/5 border-white/10 text-white/30 hover:bg-white/10'
+                                }`}
+                            >
+                                {div}
+                            </button>
+                        ))}
+                    </div>
+                 </div>
+                 {/* FX Layout View Selector */}
+                 <div className="flex gap-1 bg-black/40 border border-white/5 p-1 rounded-sm mt-1 flex-shrink-0">
+                    {(['KNOBS', 'SLIDERS', 'XY_PAD'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => setFxViewMode(mode)}
+                        className={`flex-1 py-1 text-[7px] font-black uppercase tracking-widest rounded-sm transition-all border ${
+                          fxViewMode === mode 
+                            ? (id === 'A' 
+                              ? 'bg-brand-cyan/25 text-brand-cyan border-brand-cyan/30 shadow-[0_0_8px_rgba(0,245,255,0.15)]' 
+                              : 'bg-brand-purple/25 text-brand-purple border-brand-purple/30 shadow-[0_0_8px_rgba(168,85,247,0.15)]')
+                            : 'text-white/30 hover:text-white/60 hover:bg-white/5 border-transparent'
+                        }`}
+                      >
+                        {mode === 'XY_PAD' ? 'XY Pad' : mode}
+                      </button>
                     ))}
-                </div>
-             </div>
-             {/* FX Layout View Selector */}
-             <div className="flex gap-1 bg-black/40 border border-white/5 p-1 rounded-sm mt-1">
-                {(['KNOBS', 'SLIDERS', 'XY_PAD'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => setFxViewMode(mode)}
-                    className={`flex-1 py-1 text-[7px] font-black uppercase tracking-widest rounded-sm transition-all border ${
-                      fxViewMode === mode 
-                        ? (id === 'A' 
-                          ? 'bg-brand-cyan/25 text-brand-cyan border-brand-cyan/30 shadow-[0_0_8px_rgba(0,245,255,0.15)]' 
-                          : 'bg-brand-purple/25 text-brand-purple border-brand-purple/30 shadow-[0_0_8px_rgba(168,85,247,0.15)]')
-                        : 'text-white/30 hover:text-white/60 hover:bg-white/5 border-transparent'
-                    }`}
-                  >
-                    {mode === 'XY_PAD' ? 'XY Pad' : mode}
-                  </button>
-                ))}
-             </div>
+                 </div>
 
-             {/* Dynamic FX Controls depending on chosen View Mode */}
-             {fxViewMode === 'KNOBS' && (
-               <div className="grid grid-cols-2 gap-4 flex-1 items-center">
-                  <Knob 
-                      label="ECHO"
-                      min={0}
-                      max={0.8}
-                      value={fx?.echo || 0} 
-                      onChange={(v) => onFxChange?.('echo', v)} 
-                      size="md"
-                      color={accentColor}
-                      defaultValue={0}
-                  />
-                  <Knob 
-                      label="FLAN"
-                      min={0}
-                      max={0.8}
-                      value={fx?.flanger || 0} 
-                      onChange={(v) => onFxChange?.('flanger', v)} 
-                      size="md"
-                      color={accentColor}
-                      defaultValue={0}
-                  />
-                  <Knob 
-                      label="BIT"
-                      min={0}
-                      max={1}
-                      value={fx?.crush || 0} 
-                      onChange={(v) => onFxChange?.('crush', v)} 
-                      size="md"
-                      color={accentColor}
-                      defaultValue={0}
-                  />
-                  <Knob 
-                      label="VERB"
-                      min={0}
-                      max={1}
-                      value={fx?.reverb || 0} 
-                      onChange={(v) => onFxChange?.('reverb', v)} 
-                      size="md"
-                      color={accentColor}
-                      defaultValue={0}
-                  />
+                 {/* Dynamic FX Controls depending on chosen View Mode */}
+                 {fxViewMode === 'KNOBS' && (
+                   <div className="grid grid-cols-2 gap-4 flex-1 items-center">
+                      <Knob 
+                          label="ECHO"
+                          min={0}
+                          max={0.8}
+                          value={fx?.echo || 0} 
+                          onChange={(v) => onFxChange?.('echo', v)} 
+                          size="md"
+                          color={accentColor}
+                          defaultValue={0}
+                      />
+                      <Knob 
+                          label="FLAN"
+                          min={0}
+                          max={0.8}
+                          value={fx?.flanger || 0} 
+                          onChange={(v) => onFxChange?.('flanger', v)} 
+                          size="md"
+                          color={accentColor}
+                          defaultValue={0}
+                      />
+                      <Knob 
+                          label="BIT"
+                          min={0}
+                          max={1}
+                          value={fx?.crush || 0} 
+                          onChange={(v) => onFxChange?.('crush', v)} 
+                          size="md"
+                          color={accentColor}
+                          defaultValue={0}
+                      />
+                      <Knob 
+                          label="VERB"
+                          min={0}
+                          max={1}
+                          value={fx?.reverb || 0} 
+                          onChange={(v) => onFxChange?.('reverb', v)} 
+                          size="md"
+                          color={accentColor}
+                          defaultValue={0}
+                      />
+                   </div>
+                 )}
+
+                 {fxViewMode === 'SLIDERS' && (
+                   <div className="grid grid-cols-4 gap-2 flex-1 items-stretch py-2">
+                      <InteractiveSlider 
+                          label="ECHO"
+                          min={0}
+                          max={0.8}
+                          value={fx?.echo || 0} 
+                          onChange={(v) => onFxChange?.('echo', v)} 
+                          color={accentColor}
+                      />
+                      <InteractiveSlider 
+                          label="FLAN"
+                          min={0}
+                          max={0.8}
+                          value={fx?.flanger || 0} 
+                          onChange={(v) => onFxChange?.('flanger', v)} 
+                          color={accentColor}
+                      />
+                      <InteractiveSlider 
+                          label="BIT"
+                          min={0}
+                          max={1}
+                          value={fx?.crush || 0} 
+                          onChange={(v) => onFxChange?.('crush', v)} 
+                          color={accentColor}
+                      />
+                      <InteractiveSlider 
+                          label="VERB"
+                          min={0}
+                          max={1}
+                          value={fx?.reverb || 0} 
+                          onChange={(v) => onFxChange?.('reverb', v)} 
+                          color={accentColor}
+                      />
+                   </div>
+                 )}
+
+                 {fxViewMode === 'XY_PAD' && (
+                   <div className="flex-1 py-1 flex flex-col justify-center">
+                     <XYPad 
+                       fx={fx} 
+                       onFxChange={onFxChange} 
+                       accentColor={accentColor} 
+                     />
+                   </div>
+                 )}
+                 
+                 <button 
+                    onClick={onSaveConfig}
+                    className="w-full py-2 bg-brand-cyan/10 border border-brand-cyan/20 text-brand-cyan text-[8px] font-black uppercase tracking-widest hover:bg-brand-cyan/20 transition-all rounded tactile-button flex-shrink-0"
+                 >
+                    SAVE FX PRESET TO TRACK
+                 </button>
+               </>
+             ) : (
+               <div className="flex flex-col gap-3 flex-1 overflow-y-auto custom-scrollbar">
+                  {/* Procedural Synths (Trance & Techno) */}
+                  <div className="space-y-1.5">
+                     <div className="flex justify-between items-center px-0.5">
+                        <span className={`text-[7.5px] font-black uppercase tracking-widest font-mono ${id === 'A' ? 'text-brand-cyan' : 'text-brand-purple'}`}>🎹 LIVE PROCEDURAL SYNTHS</span>
+                        <span className="text-[6px] text-zinc-400 font-mono">0ms buffering</span>
+                     </div>
+                     <div className="grid grid-cols-2 gap-2">
+                        <button 
+                          onClick={() => onPadTrigger('trance_stab')}
+                          className="h-12 rounded bg-cyan-600/10 hover:bg-cyan-600/15 border border-cyan-500/20 active:scale-95 transition-all p-2 flex flex-col justify-center items-start text-left group"
+                        >
+                           <span className="text-[8px] font-bold text-cyan-400 uppercase tracking-wide group-hover:text-cyan-300">TRANCE DETUNED STAB</span>
+                           <span className="text-[6.5px] font-mono text-zinc-400 leading-tight">Super-saw 5-note minor 9th chord shift</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('acid_line')}
+                          className="h-12 rounded bg-purple-600/10 hover:bg-purple-600/15 border border-purple-500/20 active:scale-95 transition-all p-2 flex flex-col justify-center items-start text-left group"
+                        >
+                           <span className="text-[8px] font-bold text-purple-400 uppercase tracking-wide group-hover:text-purple-300">ACID 303 CORE SEQUENCE</span>
+                           <span className="text-[6.5px] font-mono text-zinc-400 leading-tight">Resonant filter-swept arps</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('rave_siren')}
+                          className="h-12 rounded bg-amber-600/10 hover:bg-amber-600/15 border border-amber-500/20 active:scale-95 transition-all p-2 flex flex-col justify-center items-start text-left group"
+                        >
+                           <span className="text-[8px] font-bold text-amber-400 uppercase tracking-wide group-hover:text-amber-300">RAVE LFO RISER</span>
+                           <span className="text-[6.5px] font-mono text-zinc-400 leading-tight">Vibrato siren sweep (0.2s - 1.2s)</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('sub_drop')}
+                          className="h-12 rounded bg-emerald-600/10 hover:bg-emerald-600/15 border border-emerald-500/20 active:scale-95 transition-all p-2 flex flex-col justify-center items-start text-left group"
+                        >
+                           <span className="text-[8px] font-bold text-emerald-400 uppercase tracking-wide group-hover:text-emerald-300">INFRA-SUB DROP</span>
+                           <span className="text-[6.5px] font-mono text-zinc-400 leading-tight">Heavy sub-bass sine drop down to 32Hz</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('noise_sweep')}
+                          className="h-12 rounded bg-indigo-600/10 hover:bg-indigo-600/15 border border-indigo-500/20 active:scale-95 transition-all p-2 flex flex-col justify-center items-start text-left group col-span-2"
+                        >
+                           <span className="text-[8px] font-bold text-indigo-400 uppercase tracking-wide group-hover:text-indigo-300">WHITE NOISE transition UPLIFT</span>
+                           <span className="text-[6.5px] font-mono text-zinc-400 leading-tight">Bandpass sweep-rise over 1.5s with stereo reverb decay</span>
+                        </button>
+                     </div>
+                  </div>
+
+                  {/* Standard audio sampler grid */}
+                  <div className="space-y-1.5 m-0 pb-1">
+                     <div className={`text-[7.5px] font-black uppercase tracking-widest font-mono px-0.5 ${id === 'A' ? 'text-brand-cyan' : 'text-brand-purple'}`}>🥁 INSTANT LAUNCHER SAMPLER</div>
+                     <div className="grid grid-cols-4 gap-1.5">
+                        <button 
+                          onClick={() => onPadTrigger('kick')}
+                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                        >
+                           <span>KICK</span>
+                           <span className="text-[5.5px] opacity-30 mt-0.5">DRUM</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('snare')}
+                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                        >
+                           <span>SNARE</span>
+                           <span className="text-[5.5px] opacity-30 mt-0.5">DRUM</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('clap')}
+                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                        >
+                           <span>CLAP</span>
+                           <span className="text-[5.5px] opacity-30 mt-0.5">SYNTH</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('hihat')}
+                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                        >
+                           <span>HI-HAT</span>
+                           <span className="text-[5.5px] opacity-30 mt-0.5">CYMBAL</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('scratch')}
+                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                        >
+                           <span>SCRATCH</span>
+                           <span className="text-[5.5px] opacity-30 mt-0.5">VINYL</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('fx_1')}
+                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                        >
+                           <span>RISER</span>
+                           <span className="text-[5.5px] opacity-30 mt-0.5">IMPACT</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('fx_2')}
+                          className={`h-9 border border-purple-800/40 bg-purple-950/20 text-purple-400 rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none hover:bg-purple-900/10`}
+                        >
+                           <span>VOCAL HO!</span>
+                           <span className="text-[5.5px] opacity-30 mt-0.5">"GO!"</span>
+                        </button>
+                        <button 
+                          onClick={() => onPadTrigger('fx_3')}
+                          className={`h-9 border border-blue-800/40 bg-blue-950/20 text-blue-400 rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none hover:bg-blue-900/10`}
+                        >
+                           <span>LASER</span>
+                           <span className="text-[5.5px] opacity-30 mt-0.5">FX DROP</span>
+                        </button>
+                     </div>
+                  </div>
                </div>
              )}
-
-             {fxViewMode === 'SLIDERS' && (
-               <div className="grid grid-cols-4 gap-2 flex-1 items-stretch py-2">
-                  <InteractiveSlider 
-                      label="ECHO"
-                      min={0}
-                      max={0.8}
-                      value={fx?.echo || 0} 
-                      onChange={(v) => onFxChange?.('echo', v)} 
-                      color={accentColor}
-                  />
-                  <InteractiveSlider 
-                      label="FLAN"
-                      min={0}
-                      max={0.8}
-                      value={fx?.flanger || 0} 
-                      onChange={(v) => onFxChange?.('flanger', v)} 
-                      color={accentColor}
-                  />
-                  <InteractiveSlider 
-                      label="BIT"
-                      min={0}
-                      max={1}
-                      value={fx?.crush || 0} 
-                      onChange={(v) => onFxChange?.('crush', v)} 
-                      color={accentColor}
-                  />
-                  <InteractiveSlider 
-                      label="VERB"
-                      min={0}
-                      max={1}
-                      value={fx?.reverb || 0} 
-                      onChange={(v) => onFxChange?.('reverb', v)} 
-                      color={accentColor}
-                  />
-               </div>
-             )}
-
-             {fxViewMode === 'XY_PAD' && (
-               <div className="flex-1 py-1 flex flex-col justify-center">
-                 <XYPad 
-                   fx={fx} 
-                   onFxChange={onFxChange} 
-                   accentColor={accentColor} 
-                 />
-               </div>
-             )}
-             
-             <button 
-                onClick={onSaveConfig}
-                className="w-full py-2 bg-brand-cyan/10 border border-brand-cyan/20 text-brand-cyan text-[8px] font-black uppercase tracking-widest hover:bg-brand-cyan/20 transition-all rounded tactile-button"
-             >
-                SAVE FX PRESET TO TRACK
-             </button>
           </motion.div>
       )}
 
