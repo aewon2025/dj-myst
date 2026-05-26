@@ -1,9 +1,14 @@
 import { motion } from 'motion/react';
-import { Play, Pause, FastForward, Rewind, ChevronRight, ChevronLeft, Zap, Layers, Music4, Save, ExternalLink, AlertTriangle } from 'lucide-react';
+import { Play, Pause, FastForward, Rewind, ChevronRight, ChevronLeft, Zap, Layers, Music4, Save, ExternalLink, AlertTriangle, Upload, Heart } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import ReactPlayer from 'react-player';
-const Player = ReactPlayer as any;
 import { audioEngine } from '../lib/audioEngine';
+
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: (() => void) | undefined;
+  }
+}
 import Waveform from './Waveform';
 import Fader from './Fader';
 import Knob from './Knob';
@@ -15,14 +20,17 @@ interface JogWheelProps {
     playbackRate: number;
     progress: number;
     rotation: number;
+    mode?: 'VINYL' | 'CDJ';
     onPitchBend?: (bend: number) => void;
     onPadTrigger?: (sample: string) => void;
     onScratchDrag?: (sec: number) => void;
     onScratchStart?: () => void;
     onScratchEnd?: () => void;
+    baseBpm: number;
+    platterStyle: 'VINYL' | 'CDJ' | 'NEON';
 }
 
-function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, onPitchBend, onPadTrigger, onScratchDrag, onScratchStart, onScratchEnd }: JogWheelProps & { onClick?: () => void }) {
+function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, onPitchBend, onPadTrigger, onScratchDrag, onScratchStart, onScratchEnd, mode = 'VINYL', baseBpm, platterStyle }: JogWheelProps & { onClick?: () => void }) {
   const [bend, setBend] = useState(1);
   const [isScratching, setIsScratching] = useState(false);
   const [rotationAngle, setRotationAngle] = useState(0); 
@@ -53,11 +61,13 @@ function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, o
     };
   }, [isPlaying, isGrabbing, playbackRate]);
 
+  const isCDJActive = mode === 'CDJ' && isPlaying;
+
   const handleStart = (clientX: number, clientY: number) => {
     if (!wheelRef.current || isLoading) return;
     setIsGrabbing(true);
     
-    if (onScratchStart) {
+    if (!isCDJActive && onScratchStart) {
       onScratchStart();
     }
 
@@ -85,17 +95,25 @@ function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, o
     if (Math.abs(angleDiff) > 0.1) {
       setRotationAngle(prev => (prev + angleDiff + 360) % 360);
       
-      // Calculate playhead seek delta: 360 deg = 2 seconds of song
-      const secDelta = angleDiff * 0.006;
-      if (onScratchDrag) {
-        onScratchDrag(secDelta);
-      }
-      
-      const velocity = Math.abs(angleDiff) * 35;
-      if (velocity > 350 && !isScratching) {
-        audioEngine.scratchWheel(velocity);
-        setIsScratching(true);
-        setTimeout(() => setIsScratching(false), 100);
+      if (isCDJActive) {
+        // CDJ Pitch Bend Mode: speed up or slow down
+        const bendAmt = 1 + (angleDiff * 0.012);
+        const clampedBend = Math.max(0.75, Math.min(1.25, bendAmt));
+        setBend(clampedBend);
+        onPitchBend?.(clampedBend);
+      } else {
+        // Vinyl Mode or paused cueing: standard scratch/seek
+        const secDelta = angleDiff * 0.006;
+        if (onScratchDrag) {
+          onScratchDrag(secDelta);
+        }
+        
+        const velocity = Math.abs(angleDiff) * 35;
+        if (velocity > 350 && !isScratching) {
+          audioEngine.scratchWheel(velocity);
+          setIsScratching(true);
+          setTimeout(() => setIsScratching(false), 100);
+        }
       }
       
       lastAngleRef.current = currentAngle;
@@ -107,13 +125,16 @@ function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, o
     setIsGrabbing(false);
     lastAngleRef.current = null;
     
-    if (onScratchEnd) {
-      onScratchEnd();
-    }
-
+    // Always reset pitch bend values on release to prevent stuck speeds
     setBend(1);
     onPitchBend?.(1);
-    setIsScratching(false);
+
+    if (!isCDJActive) {
+      if (onScratchEnd) {
+        onScratchEnd();
+      }
+      setIsScratching(false);
+    }
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -194,13 +215,38 @@ function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, o
           : 'cursor-grab hover:border-zinc-800'
       }`}
     >
-      {/* Vinyl record shiny grooves */}
-      <div 
-        className="absolute inset-0 rounded-full opacity-40 pointer-events-none" 
-        style={{ 
-          background: 'repeating-radial-gradient(circle, #010101, #010101 2px, #18181e 3px, #010101 4px)' 
-        }} 
-      />
+      {/* 1. VINYL Grooves */}
+      {platterStyle === 'VINYL' && (
+        <div 
+          className="absolute inset-0 rounded-full opacity-40 pointer-events-none" 
+          style={{ 
+            background: 'repeating-radial-gradient(circle, #010101, #010101 2px, #18181e 3px, #010101 4px)' 
+          }} 
+        />
+      )}
+
+      {/* 2. CDJ Strobe Rings */}
+      {platterStyle === 'CDJ' && (
+        <>
+          <div className="absolute inset-2 rounded-full border-4 border-dashed border-zinc-800 opacity-60 pointer-events-none" />
+          <div className="absolute inset-4 rounded-full border-2 border-dashed border-zinc-700 opacity-40 pointer-events-none" />
+          <div className="absolute inset-6 rounded-full border border-dashed border-zinc-600 pointer-events-none opacity-20" />
+        </>
+      )}
+
+      {/* 3. NEON Wave Rings */}
+      {platterStyle === 'NEON' && (
+        <>
+          <div className={`absolute inset-1 rounded-full border border-double pointer-events-none ${
+            id === 'A' 
+              ? 'border-blue-500/35 shadow-[0_0_15px_rgba(59,130,246,0.2)]' 
+              : 'border-purple-500/35 shadow-[0_0_15px_rgba(168,85,247,0.2)]'
+          }`} />
+          <div className={`absolute inset-5 rounded-full border border-dotted pointer-events-none animate-[spin_12s_linear_infinite] ${
+            id === 'A' ? 'border-cyan-500/40' : 'border-pink-500/40'
+          }`} />
+        </>
+      )}
       
       {/* Ambient lighting shine highlights */}
       <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.03] to-transparent pointer-events-none" />
@@ -218,13 +264,49 @@ function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, o
           </div>
         )}
 
-        {/* Traditional White Platter Marker (Strobe dots / stripe) */}
-        <div className={`absolute top-0 w-1.5 h-6 shadow-[0_0_8px_currentColor] rounded-b-full ${
-          id === 'A' ? 'bg-blue-400 text-blue-500' : 'bg-purple-400 text-purple-500'
-        }`} />
-        <div className="absolute bottom-0 w-1 h-3 bg-white/10 rounded-t-full" />
-        <div className="absolute left-0 w-3 h-1 bg-white/10 rounded-r-full" />
-        <div className="absolute right-0 w-3 h-1 bg-white/10 rounded-l-full" />
+        {/* Style-specific markers inside the rotating chassis */}
+        {platterStyle === 'CDJ' ? (
+          <>
+            {/* CDJ Strobe Dots along the outer edge of rotating chassis */}
+            {[...Array(24)].map((_, i) => (
+              <div 
+                key={i}
+                className="absolute w-1 h-1 bg-white/20 rounded-full"
+                style={{
+                  transform: `rotate(${i * 15}deg) translateY(-76px)`
+                }}
+              />
+            ))}
+            {/* CDJ Marker Stripe */}
+            <div className={`absolute top-0 w-2.5 h-6 shadow-[0_0_10px_currentColor] ${
+              id === 'A' ? 'bg-blue-400 text-blue-500' : 'bg-purple-400 text-purple-500'
+            }`} />
+          </>
+        ) : platterStyle === 'NEON' ? (
+          <>
+            {/* NEON Laser Lines rotating */}
+            <div className={`absolute w-full h-[1px] ${
+              id === 'A' ? 'bg-gradient-to-r from-blue-500/10 via-blue-500 to-blue-500/10' : 'bg-gradient-to-r from-purple-500/10 via-purple-500 to-purple-500/10'
+            }`} />
+            <div className={`absolute w-[1px] h-full ${
+              id === 'A' ? 'bg-gradient-to-b from-blue-500/10 via-blue-500 to-blue-500/10' : 'bg-gradient-to-b from-purple-500/10 via-purple-500 to-purple-500/10'
+            }`} />
+            {/* Neon Marker */}
+            <div className={`absolute top-0 w-3 h-3 rounded-full shadow-[0_0_12px_currentColor] ${
+              id === 'A' ? 'bg-cyan-400 text-cyan-400' : 'bg-pink-400 text-pink-400'
+            }`} />
+          </>
+        ) : (
+          <>
+            {/* Traditional Vinyl Marker Stripe */}
+            <div className={`absolute top-0 w-1.5 h-6 shadow-[0_0_8px_currentColor] rounded-b-full ${
+              id === 'A' ? 'bg-blue-400 text-blue-500' : 'bg-purple-400 text-purple-500'
+            }`} />
+            <div className="absolute bottom-0 w-1 h-3 bg-white/10 rounded-t-full" />
+            <div className="absolute left-0 w-3 h-1 bg-white/10 rounded-r-full" />
+            <div className="absolute right-0 w-3 h-1 bg-white/10 rounded-l-full" />
+          </>
+        )}
       </div>
 
       {/* Center Metal Cap Display */}
@@ -243,9 +325,11 @@ function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, o
         
         {isGrabbing && (
           <div className="absolute inset-0 flex items-center justify-center bg-[#101014] rounded-full z-20">
-             <span className={`text-[9px] font-black uppercase tracking-widest animate-pulse ${
+             <span className={`text-[9.5px] font-black uppercase tracking-widest animate-pulse ${
                id === 'A' ? 'text-blue-400 drop-shadow-[0_0_4px_rgba(59,130,246,0.6)]' : 'text-purple-400 drop-shadow-[0_0_4px_rgba(168,85,247,0.6)]'
-             }`}>TOUCH</span>
+             }`}>
+               {isCDJActive ? (bend !== 1 ? 'NUDGE' : 'TOUCH') : (isScratching ? 'SCRATCH' : 'HOLD')}
+             </span>
           </div>
         )}
 
@@ -254,7 +338,7 @@ function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, o
             ? 'text-zinc-500' 
             : (id === 'A' ? 'text-blue-400 drop-shadow-[0_0_6px_rgba(59,130,246,0.3)]' : 'text-purple-400 drop-shadow-[0_0_6px_rgba(168,85,247,0.3)]')
         }`}>
-          {(128 * playbackRate * bend).toFixed(1)}
+          {(baseBpm * playbackRate * bend).toFixed(1)}
         </div>
         
         <div className="text-[7px] text-zinc-500/80 uppercase font-bold tracking-widest mt-1">
@@ -272,6 +356,9 @@ function JogWheel({ isPlaying, isLoading, id, playbackRate, rotation, onClick, o
 interface DeckProps {
   id: 'A' | 'B';
   trackUrl: string | null;
+  trackTitle?: string;
+  trackArtist?: string;
+  onFileDrop?: (file: File) => void;
   isPlaying: boolean;
   isLoading?: boolean;
   onPlayPause: () => void;
@@ -315,6 +402,12 @@ interface DeckProps {
   onEject?: () => void;
   onSkip?: (seconds: number) => void;
   isSynced?: boolean;
+  baseBpm?: number;
+  onBpmTap?: () => void;
+  isSlipActive?: boolean;
+  onSlipToggle?: () => void;
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
 }
 
 interface InteractiveSliderProps {
@@ -739,16 +832,43 @@ function HotCueButton({ index, hasCue, cueTime, glowClass, formatTime, onHotCue 
 }
 
 export default function Deck({ 
-  id, trackUrl, isPlaying, isLoading, onPlayPause, onSync, 
+  id, trackUrl, trackTitle, trackArtist, onFileDrop, isPlaying, isLoading, onPlayPause, onSync, 
   playbackRate, onRateChange, onPitchBend, fx, onFxChange, 
   onPadTrigger, onRoll, activeRoll, onSaveConfig, sourceType = 'AUDIO', externalUrl,
   keyLock, onKeyLockToggle, gain = 1, onGainChange, hotCues = [], onHotCue, onClearCues,
   loop, onLoopIn, onLoopOut, onExitLoop, resolvedVolume = 1,
   onRewind, onCuePress, onCueRelease, isCueActive = false, onReverseToggle, isReversed = false,
   onScratchDrag, onScratchStart, onScratchEnd, onPlayerReady, onPlayerBuffer, isSynced = false,
-  onPlayerPlay, onPlayerPause, onEject, onSkip
+  onPlayerPlay, onPlayerPause, onEject, onSkip,
+  baseBpm = 128, onBpmTap, isSlipActive = false, onSlipToggle,
+  isFavorite = false, onToggleFavorite
 }: DeckProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [jogMode, setJogMode] = useState<'VINYL' | 'CDJ'>('VINYL');
+  const [platterStyle, setPlatterStyle] = useState<'VINYL' | 'CDJ' | 'NEON'>('VINYL');
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      onFileDrop?.(file);
+    }
+  };
   const [advancedTab, setAdvancedTab] = useState<'FX' | 'SAMPLER'>('FX');
   const [fxViewMode, setFxViewMode] = useState<'KNOBS' | 'SLIDERS' | 'XY_PAD'>('KNOBS');
 
@@ -756,6 +876,163 @@ export default function Deck({
   const [extPlayedSeconds, setExtPlayedSeconds] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [nativeDuration, setNativeDuration] = useState(0);
+
+  const ytPlayerRef = useRef<any>(null);
+  const [isYtReady, setIsYtReady] = useState(false);
+
+  // Helper to extract YouTube ID
+  const getYouTubeId = (url: string): string | null => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+  };
+
+  // Helper to get Spotify embed URL
+  const getSpotifyEmbedUrl = (url: string): string | null => {
+    const match = url.match(/\/(track|playlist|album)\/([a-zA-Z0-9]+)/);
+    if (match) {
+      return `https://open.spotify.com/embed/${match[1]}/${match[2]}`;
+    }
+    return null;
+  };
+
+  const ytId = externalUrl ? getYouTubeId(externalUrl) : null;
+  const spotifyEmbedUrl = externalUrl ? getSpotifyEmbedUrl(externalUrl) : null;
+
+  // Dynamically load YouTube API script if needed
+  useEffect(() => {
+    if (sourceType !== 'EXTERNAL' || !ytId) return;
+
+    let active = true;
+
+    const initPlayer = (YT: any) => {
+      if (!active) return;
+      
+      // Destroy existing player if any
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.destroy();
+        } catch (e) {}
+        ytPlayerRef.current = null;
+      }
+
+      try {
+        const container = document.getElementById(`yt-player-${id}`);
+        if (!container) return;
+
+        ytPlayerRef.current = new YT.Player(`yt-player-${id}`, {
+          videoId: ytId,
+          playerVars: {
+            autoplay: isPlaying ? 1 : 0,
+            controls: 1,
+            playsinline: 1,
+            enablejsapi: 1,
+            origin: window.location.origin && window.location.origin !== 'null' ? window.location.origin : undefined
+          },
+          events: {
+            onReady: (event: any) => {
+              if (!active) return;
+              setIsYtReady(true);
+              event.target.setVolume(resolvedVolume * 100);
+              onPlayerReady?.();
+              setExtDuration(event.target.getDuration() || 0);
+            },
+            onStateChange: (event: any) => {
+              if (!active) return;
+              // YT.PlayerState: -1 (unstarted), 0 (ended), 1 (playing), 2 (paused), 3 (buffering), 5 (video cued)
+              const state = event.data;
+              if (state === 1) {
+                onPlayerPlay?.();
+              } else if (state === 2 || state === 0) {
+                onPlayerPause?.();
+              } else if (state === 3) {
+                onPlayerBuffer?.();
+              }
+            }
+          }
+        });
+      } catch (err) {
+        console.error("Error creating YouTube player instance:", err);
+      }
+    };
+
+    if (window.YT && window.YT.Player) {
+      initPlayer(window.YT);
+    } else {
+      // Setup global callback if not yet defined
+      const existingCallback = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        if (existingCallback) existingCallback();
+        if (window.YT && window.YT.Player) {
+          initPlayer(window.YT);
+        }
+      };
+
+      // Inject script if not already in document
+      if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+        const tag = document.createElement('script');
+        tag.src = 'https://www.youtube.com/iframe_api';
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        if (firstScriptTag && firstScriptTag.parentNode) {
+          firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+        } else {
+          document.head.appendChild(tag);
+        }
+      }
+    }
+
+    return () => {
+      active = false;
+      setIsYtReady(false);
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.destroy();
+        } catch (e) {}
+        ytPlayerRef.current = null;
+      }
+    };
+  }, [externalUrl, sourceType, id]);
+
+  // Synchronize playing/pausing state
+  useEffect(() => {
+    if (!ytPlayerRef.current || !isYtReady) return;
+    try {
+      const playerState = ytPlayerRef.current.getPlayerState();
+      if (isPlaying && playerState !== 1) {
+        ytPlayerRef.current.playVideo();
+      } else if (!isPlaying && playerState === 1) {
+        ytPlayerRef.current.pauseVideo();
+      }
+    } catch (e) {}
+  }, [isPlaying, isYtReady]);
+
+  // Synchronize volume level
+  useEffect(() => {
+    if (!ytPlayerRef.current || !isYtReady) return;
+    try {
+      ytPlayerRef.current.setVolume(resolvedVolume * 100);
+    } catch (e) {}
+  }, [resolvedVolume, isYtReady]);
+
+  // Track playback time progress for YouTube
+  useEffect(() => {
+    if (sourceType !== 'EXTERNAL' || !isPlaying || !isYtReady) return;
+
+    const interval = setInterval(() => {
+      if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+        try {
+          const time = ytPlayerRef.current.getCurrentTime();
+          setExtPlayedSeconds(time || 0);
+          const duration = ytPlayerRef.current.getDuration();
+          if (duration && duration !== extDuration) {
+            setExtDuration(duration);
+          }
+        } catch (e) {}
+      }
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [isPlaying, sourceType, extDuration, isYtReady]);
 
   // Read native current position
   useEffect(() => {
@@ -803,7 +1080,74 @@ export default function Deck({
   const samples = ["scratch", "fx_1", "fx_2", "fx_3"];
 
   return (
-    <div className={`flex flex-col items-center justify-between py-3 flex-1 h-full relative hardware-panel ${id === 'A' ? 'deck-gradient-a' : 'deck-gradient-b'}`}>
+    <div 
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`flex flex-col items-center justify-between py-3 flex-1 h-full relative hardware-panel ${id === 'A' ? 'deck-gradient-a' : 'deck-gradient-b'}`}
+    >
+      {/* Drag and Drop File Highlight Overlay */}
+      {isDraggingFile && (
+        <div className={`absolute inset-0 z-50 rounded-lg backdrop-blur-md flex flex-col items-center justify-center border-2 border-dashed p-6 text-center transition-all ${
+          id === 'A' 
+            ? 'bg-blue-950/90 border-blue-400 text-blue-300 shadow-[0_0_30px_rgba(59,130,246,0.4)]' 
+            : 'bg-purple-950/90 border-purple-400 text-purple-300 shadow-[0_0_30px_rgba(168,85,247,0.4)]'
+        }`}>
+          <Upload className="w-10 h-10 mb-2 animate-bounce" />
+          <p className="text-xs font-black uppercase tracking-widest">
+            DROP FILE TO LOAD ON DECK {id}
+          </p>
+          <p className="text-[9px] opacity-60 font-mono mt-1">
+            Supports MP3, WAV, OGG, M4A, FLAC, etc.
+          </p>
+        </div>
+      )}
+
+      {/* Track info strip with File Loader at the very top */}
+      <div className="w-full px-4 flex items-center justify-between gap-2 z-10 border-b border-white/5 pb-2 mb-2">
+        <div className="flex flex-col min-w-0 flex-1 text-left">
+          <span className="text-[7.5px] font-black uppercase tracking-[0.2em] opacity-30">LOADED SOUND SOURCE</span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            {trackUrl && onToggleFavorite && (
+              <button
+                onClick={onToggleFavorite}
+                className={`flex-shrink-0 cursor-pointer p-0.5 rounded transition-all ${
+                  isFavorite 
+                    ? 'text-rose-500 hover:scale-110 drop-shadow-[0_0_4px_rgba(244,63,94,0.5)]' 
+                    : 'text-white/20 hover:text-white/40 hover:scale-105'
+                }`}
+                title={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+              >
+                <Heart size={11} fill={isFavorite ? 'currentColor' : 'none'} />
+              </button>
+            )}
+            <span 
+              title={trackTitle || undefined}
+              className={`block truncate text-[10.5px] font-black font-mono uppercase ${id === 'A' ? 'text-blue-400' : 'text-purple-400'} w-full`}
+            >
+              {trackTitle || 'NO TRACK LOADED'}
+            </span>
+          </div>
+        </div>
+        
+        {/* Direct manual file load button for this specific deck */}
+        <label className="flex items-center gap-1 px-2 py-1 text-[8.5px] font-bold uppercase tracking-wider rounded border border-white/10 hover:border-white/20 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-all cursor-pointer select-none">
+          <Upload size={10} className={id === 'A' ? 'text-blue-400' : 'text-purple-400'} />
+          <span>LOAD FILE</span>
+          <input 
+            type="file" 
+            className="hidden" 
+            accept="audio/*" 
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && onFileDrop) {
+                onFileDrop(file);
+              }
+            }} 
+          />
+        </label>
+      </div>
+
       {sourceType === 'EXTERNAL' && externalUrl && (
         <div className="absolute inset-0 z-40 bg-brand-deep/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center rounded-lg border border-white/10">
           {onEject && (
@@ -833,35 +1177,25 @@ export default function Deck({
           </div>
 
           <div className="w-full aspect-video bg-black rounded overflow-hidden border border-white/5 relative mb-6">
-            <Player 
-              url={externalUrl} 
-              playing={isPlaying}
-              volume={resolvedVolume}
-              controls={true}
-              playsinline={true}
-              width="100%"
-              height="100%"
-              style={{ position: 'absolute', top: 0, left: 0 }}
-              onReady={onPlayerReady}
-              onBuffer={onPlayerBuffer}
-              onBufferEnd={onPlayerReady}
-              onError={onPlayerReady}
-              onPlay={onPlayerPlay}
-              onPause={onPlayerPause}
-              onDuration={(d: number) => setExtDuration(d)}
-              onProgress={(state: { playedSeconds: number }) => setExtPlayedSeconds(state.playedSeconds)}
-              config={{
-                youtube: {
-                  playerVars: {
-                    autoplay: 0,
-                    playsinline: 1,
-                    controls: 1,
-                    enablejsapi: 1,
-                    origin: window.location.origin && window.location.origin !== 'null' ? window.location.origin : undefined
-                  }
-                }
-              }}
-            />
+            {ytId ? (
+              <div id={`yt-player-${id}`} className="absolute inset-0 w-full h-full" />
+            ) : spotifyEmbedUrl ? (
+              <iframe
+                src={spotifyEmbedUrl}
+                width="100%"
+                height="100%"
+                frameBorder="0"
+                allowFullScreen={false}
+                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                loading="lazy"
+                className="absolute inset-0 w-full h-full"
+                title={`Spotify Player Deck ${id}`}
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center text-zinc-500 text-[10px]">
+                Unsupported or invalid stream URL
+              </div>
+            )}
           </div>
 
           <div className="w-full flex justify-center mb-4">
@@ -935,39 +1269,109 @@ export default function Deck({
 
          <div className="flex flex-col items-end">
             <span className="text-[7px] font-black uppercase tracking-[0.2em] opacity-20 font-sans">SPEED / PITCH</span>
-            <div className="lcd-display text-[10px] font-bold text-brand-cyan text-center tabular-nums">
-               {((playbackRate - 1) * 100).toFixed(1)}%
+            <div className="lcd-display text-[10px] font-bold text-brand-cyan text-center tabular-nums flex flex-col items-end gap-0.5 min-w-[70px]">
+               <span>{((playbackRate - 1) * 100).toFixed(1)}%</span>
+               <span className="text-[7.5px] text-zinc-500 font-normal">BASE: {baseBpm.toFixed(0)} BPM</span>
             </div>
+            <button
+              onClick={onBpmTap}
+              className="mt-1 px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[7px] font-black text-white/50 hover:text-white hover:bg-white/10 active:scale-95 transition-all uppercase tracking-wider cursor-pointer"
+              title="Tap to the beat to set the BPM"
+            >
+              TAP BPM
+            </button>
          </div>
       </div>
 
       {/* Platter Area */}
       <div className="flex flex-col items-center gap-4 relative w-full px-4">
-        <div className="relative group">
-            <JogWheel 
-                id={id}
-                playbackRate={playbackRate}
-                isLoading={isLoading}
-                isPlaying={isPlaying} 
-                progress={0} 
-                rotation={0} 
-                onPitchBend={onPitchBend}
-                onPadTrigger={onPadTrigger}
-                onScratchDrag={onScratchDrag}
-                onScratchStart={onScratchStart}
-                onScratchEnd={onScratchEnd}
-                onClick={() => onPadTrigger('scratch')} 
-            />
-            
-            {/* Toggle Button */}
-            <button 
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className={`absolute ${id === 'A' ? '-right-8' : '-left-8'} top-1/2 -translate-y-1/2 p-2 bg-brand-panel border border-white/10 text-white/40 hover:text-white transition-all z-20 shadow-2xl rounded-full tactile-button`}
-                title={showAdvanced ? "Back to Deck" : "Show FX"}
-            >
-                {showAdvanced ? (id === 'A' ? <ChevronLeft size={12} /> : <ChevronRight size={12} />) : (id === 'A' ? <ChevronRight size={12} /> : <ChevronLeft size={12} />)}
-            </button>
-        </div>
+          <div className="relative group flex flex-col items-center">
+              <JogWheel 
+                  id={id}
+                  playbackRate={playbackRate}
+                  isLoading={isLoading}
+                  isPlaying={isPlaying} 
+                  progress={0} 
+                  rotation={0} 
+                  onPitchBend={onPitchBend}
+                  onPadTrigger={onPadTrigger}
+                  onScratchDrag={onScratchDrag}
+                  onScratchStart={onScratchStart}
+                  onScratchEnd={onScratchEnd}
+                  onClick={() => onPadTrigger('scratch')}
+                  mode={jogMode}
+                  baseBpm={baseBpm}
+                  platterStyle={platterStyle}
+              />
+              
+              {/* Toggle Button */}
+              <button 
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className={`absolute ${id === 'A' ? '-right-8' : '-left-8'} top-1/2 -translate-y-1/2 p-2 bg-brand-panel border border-white/10 text-white/40 hover:text-white transition-all z-20 shadow-2xl rounded-full tactile-button`}
+                  title={showAdvanced ? "Back to Deck" : "Show FX"}
+              >
+                  {showAdvanced ? (id === 'A' ? <ChevronLeft size={12} /> : <ChevronRight size={12} />) : (id === 'A' ? <ChevronRight size={12} /> : <ChevronLeft size={12} />)}
+              </button>
+          </div>
+
+          {/* Grouped Platter & Playback Mode Controls */}
+          <div className="flex flex-col items-center gap-2 z-10 w-full">
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {/* Jog Mode Selector */}
+              <div className="flex items-center gap-1 bg-black/50 p-0.5 rounded-full border border-white/5 text-[8.5px] font-mono font-bold">
+                <button
+                  onClick={() => setJogMode('VINYL')}
+                  className={`px-2 py-0.5 rounded-full transition-all uppercase select-none cursor-pointer ${
+                    jogMode === 'VINYL' 
+                      ? 'bg-amber-500 text-black shadow-[0_2px_8px_rgba(245,158,11,0.3)] font-black' 
+                      : 'text-white/40 hover:text-white/60'
+                  }`}
+                >
+                  VINYL
+                </button>
+                <button
+                  onClick={() => setJogMode('CDJ')}
+                  className={`px-2 py-0.5 rounded-full transition-all uppercase select-none cursor-pointer ${
+                    jogMode === 'CDJ' 
+                      ? (id === 'A' ? 'bg-blue-500 text-white shadow-[0_2px_8px_rgba(59,130,246,0.3)] font-black' : 'bg-purple-500 text-white shadow-[0_2px_8px_rgba(168,85,247,0.3)] font-black')
+                      : 'text-white/40 hover:text-white/60'
+                  }`}
+                >
+                  CDJ
+                </button>
+              </div>
+
+              {/* Slip Mode Toggle */}
+              <button
+                onClick={onSlipToggle}
+                className={`px-2.5 py-1 rounded-full border text-[8px] font-mono font-black tracking-wider uppercase transition-all select-none cursor-pointer ${
+                  isSlipActive 
+                    ? 'bg-red-500 border-red-400 text-white shadow-[0_0_8px_rgba(239,68,68,0.5)]' 
+                    : 'bg-black/50 border-white/5 text-white/40 hover:text-white hover:border-white/10'
+                }`}
+              >
+                SLIP
+              </button>
+            </div>
+
+            {/* Platter Visual Style Cycle Selector */}
+            <div className="flex items-center gap-0.5 bg-black/50 p-0.5 rounded-full border border-white/5 text-[8px] font-mono font-bold">
+              <span className="text-[7.5px] text-zinc-500 px-1.5 uppercase font-sans tracking-wider">STYLE:</span>
+              {(['VINYL', 'CDJ', 'NEON'] as const).map((style) => (
+                <button
+                  key={style}
+                  onClick={() => setPlatterStyle(style)}
+                  className={`px-2.5 py-0.5 rounded-full transition-all uppercase select-none cursor-pointer ${
+                    platterStyle === style 
+                      ? 'bg-zinc-700 text-white font-black' 
+                      : 'text-white/40 hover:text-white/60'
+                  }`}
+                >
+                  {style}
+                </button>
+              ))}
+            </div>
+          </div>
         
         <div className="grid grid-cols-2 gap-4 w-full">
             {/* Loops & Cues Left Column */}
@@ -1272,42 +1676,42 @@ export default function Deck({
                      <div className="grid grid-cols-4 gap-1.5">
                         <button 
                           onClick={() => onPadTrigger('kick')}
-                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                          className={`h-9 border border-rose-800/40 bg-rose-950/20 text-rose-400 rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none hover:bg-rose-900/10 shadow-[0_0_10px_rgba(244,63,94,0.05)]`}
                         >
                            <span>KICK</span>
                            <span className="text-[5.5px] opacity-30 mt-0.5">DRUM</span>
                         </button>
                         <button 
                           onClick={() => onPadTrigger('snare')}
-                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                          className={`h-9 border border-amber-800/40 bg-amber-950/20 text-amber-400 rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none hover:bg-amber-900/10 shadow-[0_0_10px_rgba(245,158,11,0.05)]`}
                         >
                            <span>SNARE</span>
                            <span className="text-[5.5px] opacity-30 mt-0.5">DRUM</span>
                         </button>
                         <button 
                           onClick={() => onPadTrigger('clap')}
-                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                          className={`h-9 border border-emerald-800/40 bg-emerald-950/20 text-emerald-400 rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none hover:bg-emerald-900/10 shadow-[0_0_10px_rgba(16,185,129,0.05)]`}
                         >
                            <span>CLAP</span>
                            <span className="text-[5.5px] opacity-30 mt-0.5">SYNTH</span>
                         </button>
                         <button 
                           onClick={() => onPadTrigger('hihat')}
-                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                          className={`h-9 border border-cyan-800/40 bg-cyan-950/20 text-cyan-400 rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none hover:bg-cyan-900/10 shadow-[0_0_10px_rgba(6,182,212,0.05)]`}
                         >
                            <span>HI-HAT</span>
                            <span className="text-[5.5px] opacity-30 mt-0.5">CYMBAL</span>
                         </button>
                         <button 
                           onClick={() => onPadTrigger('scratch')}
-                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                          className={`h-9 border border-indigo-800/40 bg-indigo-950/20 text-indigo-400 rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none hover:bg-indigo-900/10 shadow-[0_0_10px_rgba(99,102,241,0.05)]`}
                         >
                            <span>SCRATCH</span>
                            <span className="text-[5.5px] opacity-30 mt-0.5">VINYL</span>
                         </button>
                         <button 
                           onClick={() => onPadTrigger('fx_1')}
-                          className={`h-9 border border-zinc-700 bg-zinc-800 hover:bg-zinc-750 text-white rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none`}
+                          className={`h-9 border border-fuchsia-800/40 bg-fuchsia-950/20 text-fuchsia-400 rounded text-[8px] font-black uppercase tracking-wide transition-all active:scale-95 flex flex-col items-center justify-center leading-none hover:bg-fuchsia-900/10 shadow-[0_0_10px_rgba(217,70,239,0.05)]`}
                         >
                            <span>RISER</span>
                            <span className="text-[5.5px] opacity-30 mt-0.5">IMPACT</span>

@@ -5,8 +5,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as Tone from 'tone';
-import { Music, Upload, Info, Settings, Search, Disc3, Headphones, ChevronUp, ChevronDown, Maximize2, LayoutGrid, List, Activity, Heart, ListPlus, Trash2, Star, Save, Clock, Download, Plus, FileText, BookOpen, ExternalLink, HelpCircle } from 'lucide-react';
+import { Music, Upload, Info, Settings, Search, Disc3, Headphones, ChevronUp, ChevronDown, Maximize2, LayoutGrid, List, Activity, Heart, ListPlus, Trash2, Star, Save, Clock, Download, Plus, FileText, BookOpen, ExternalLink, HelpCircle, Database } from 'lucide-react';
 import { audioEngine } from './lib/audioEngine';
+import { indexedDbCache } from './lib/indexedDbCache';
 import Deck from './components/Deck';
 import Mixer from './components/Mixer';
 import Waveform from './components/Waveform';
@@ -53,6 +54,7 @@ const DEFAULT_TRACKS = [
 export default function App() {
   const [isStarted, setIsStarted] = useState(false);
   const [playingState, setPlayingState] = useState({ A: false, B: false });
+  const [draggingWaveform, setDraggingWaveform] = useState<{ A: boolean; B: boolean }>({ A: false, B: false });
   const [cuePoints, setCuePoints] = useState<Record<'A' | 'B', number>>({ A: 0, B: 0 });
   const cuePointsRef = useRef<Record<'A' | 'B', number>>({ A: 0, B: 0 });
   const [reverseStates, setReverseStates] = useState<Record<'A' | 'B', boolean>>({ A: false, B: false });
@@ -68,6 +70,7 @@ export default function App() {
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const activeLoadingUrlRef = useRef<{ A: string | null, B: string | null }>({ A: null, B: null });
   const wasPlayingBeforeScratch = useRef<Record<'A' | 'B', boolean>>({ A: false, B: false });
+  const tapTimestamps = useRef<{ A: number[], B: number[] }>({ A: [], B: [] });
   
   const [playlist, setPlaylist] = useState<SavedTrack[]>(() => {
     try {
@@ -89,7 +92,24 @@ export default function App() {
     }
   });
   
-  const [activeLibraryTab, setActiveLibraryTab] = useState<'CRATES' | 'PLAYLIST' | 'FAVORITES' | 'HISTORY' | 'YOUTUBE' | 'SPOTIFY' | 'MANUAL'>('FAVORITES');
+  const [activeLibraryTab, setActiveLibraryTab] = useState<'CRATES' | 'PLAYLIST' | 'FAVORITES' | 'HISTORY' | 'YOUTUBE' | 'SPOTIFY' | 'MANUAL' | 'OFFLINE_CRATE'>('FAVORITES');
+  const [cachedTrackIds, setCachedTrackIds] = useState<string[]>([]);
+  const [cachedTracksMeta, setCachedTracksMeta] = useState<{ id: string; name: string; size: number; type: string; addedAt: number }[]>([]);
+
+  const refreshOfflineCrate = useCallback(async () => {
+    try {
+      const metaList = await indexedDbCache.getAllTracksMetadata();
+      setCachedTracksMeta(metaList);
+      setCachedTrackIds(metaList.map(m => m.id));
+    } catch (e) {
+      console.warn("Failed to refresh offline crate", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshOfflineCrate();
+  }, [refreshOfflineCrate]);
+
   const [deckSources, setDeckSources] = useState<{ A: 'AUDIO' | 'EXTERNAL', B: 'AUDIO' | 'EXTERNAL' }>({ A: 'AUDIO', B: 'AUDIO' });
   const [externalUrls, setExternalUrls] = useState<{ A: string | null, B: string | null }>({ A: null, B: null });
 
@@ -145,6 +165,12 @@ export default function App() {
     A: { in: null as number | null, active: false },
     B: { in: null as number | null, active: false },
   });
+  const [eqKillState, setEqKillState] = useState({
+    A: { low: false, mid: false, high: false },
+    B: { low: false, mid: false, high: false },
+  });
+  const [deckBaseBpm, setDeckBaseBpm] = useState({ A: 128, B: 128 });
+  const [slipModeState, setSlipModeState] = useState({ A: false, B: false });
   const [history, setHistory] = useState<SavedTrack[]>(() => {
     try {
       const saved = localStorage.getItem('dj_history');
@@ -169,32 +195,89 @@ export default function App() {
     setIsStarted(true);
   };
 
-  const loadTrack = async (deck: 'A' | 'B', name: string, urlOrId: string, isAudius = false, config?: TrackConfig) => {
+  const loadTrack = async (deck: 'A' | 'B', name: string, urlOrId: string | File, isAudius = false, config?: TrackConfig) => {
     // Reset sync lock state on track load
     setSyncActive(prev => ({ ...prev, [deck]: false }));
 
-    // Determine if it's an external URL (YouTube/Spotify)
-    const isYouTube = urlOrId.includes('youtube.com') || urlOrId.includes('youtu.be');
-    const isSpotify = urlOrId.includes('spotify.com');
+    let finalUrl = '';
+    let trackingKey = '';
+    let savedId = '';
+    let isLocalFile = false;
 
-    if (isYouTube || isSpotify) {
-      setDeckSources(prev => ({ ...prev, [deck]: 'EXTERNAL' }));
-      setExternalUrls(prev => ({ ...prev, [deck]: urlOrId }));
-      setTrackInfo(prev => ({ 
-        ...prev, 
-        [deck]: { title: name, url: urlOrId, id: urlOrId, artist: 'External', duration: 0 } 
-      }));
-      // Stop the audio engine player if it was playing
-      audioEngine.stop(deck);
-      setPlayingState(prev => ({ ...prev, [deck]: false }));
-      // Set loading state to true for Youtube/Spotify so play button is greyed out/shows loading indicator!
-      setLoadingState(prev => ({ ...prev, [deck]: true }));
-      // Robust Fallback: automatically clear loading state for external streams after 2 seconds
-      // so if the sandboxed iframe delays browser ready events, the user is not locked out of interface controls.
-      setTimeout(() => {
-        setLoadingState(prev => ({ ...prev, [deck]: false }));
-      }, 2000);
-      return;
+    if (typeof urlOrId !== 'string' || urlOrId instanceof File) {
+      // It's a binary file uploaded directly in the current browser session
+      const file = urlOrId as File;
+      trackingKey = file.name + '_' + file.size;
+      const fileId = 'local_' + file.name.replace(/[^a-zA-Z0-9]/g, '_') + '_' + file.size;
+      
+      // Auto cache to IndexedDB asynchronously so it does not block loading latency
+      indexedDbCache.saveTrack(fileId, file.name, file.size, file.type, file)
+        .then(() => {
+          refreshOfflineCrate();
+        })
+        .catch((err) => {
+          console.warn("Auto-caching input file to IndexedDB failed:", err);
+        });
+      
+      finalUrl = URL.createObjectURL(file);
+      savedId = 'indexeddb:' + fileId;
+      isLocalFile = true;
+    } else {
+      trackingKey = urlOrId;
+      
+      if (urlOrId.startsWith('indexeddb:')) {
+        const fileId = urlOrId.substring('indexeddb:'.length);
+        setIsSearching(true);
+        try {
+          const cachedBlob = await indexedDbCache.getTrack(fileId);
+          if (cachedBlob) {
+            finalUrl = URL.createObjectURL(cachedBlob);
+            savedId = urlOrId;
+            isLocalFile = true;
+          } else {
+            throw new Error("Local file data not found in browser database. It might have been deleted or storage has been cleared.");
+          }
+        } catch (e: any) {
+          setIsSearching(false);
+          console.error(e);
+          setLoadingState(prev => ({ ...prev, [deck]: false }));
+          setTrackInfo(prev => ({
+            ...prev,
+            [deck]: { ...prev[deck], title: `NOT FOUND: RE-DRAG MP3` }
+          }));
+          alert(`Could not load cached file: ${e.message || e}\n\nPlease drag and drop the original file onto Deck ${deck} to re-index it. This happens if browser storage was cleared.`);
+          return;
+        }
+        setIsSearching(false);
+      } else {
+        // Determine if it's an external URL (YouTube/Spotify)
+        const isYouTube = urlOrId.includes('youtube.com') || urlOrId.includes('youtu.be');
+        const isSpotify = urlOrId.includes('spotify.com');
+
+        if (isYouTube || isSpotify) {
+          setDeckSources(prev => ({ ...prev, [deck]: 'EXTERNAL' }));
+          setExternalUrls(prev => ({ ...prev, [deck]: urlOrId }));
+          setTrackInfo(prev => ({ 
+            ...prev, 
+            [deck]: { title: name, url: urlOrId, id: urlOrId, artist: 'External', duration: 0 } 
+          }));
+          // Stop the audio engine player if it was playing
+          audioEngine.stop(deck);
+          setPlayingState(prev => ({ ...prev, [deck]: false }));
+          // Set loading state to true for Youtube/Spotify so play button is greyed out/shows loading indicator!
+          setLoadingState(prev => ({ ...prev, [deck]: true }));
+          // Robust Fallback: automatically clear loading state for external streams after 2 seconds
+          // so if the sandboxed iframe delays browser ready events, the user is not locked out of interface controls.
+          setTimeout(() => {
+            setLoadingState(prev => ({ ...prev, [deck]: false }));
+          }, 2000);
+          return;
+        }
+
+        // Regular or Audius URL
+        savedId = urlOrId;
+        finalUrl = urlOrId;
+      }
     }
 
     setDeckSources(prev => ({ ...prev, [deck]: 'AUDIO' }));
@@ -202,7 +285,7 @@ export default function App() {
 
     // Stop physical playing immediately so no music is left in the queue/background
     audioEngine.stop(deck);
-    activeLoadingUrlRef.current[deck] = urlOrId;
+    activeLoadingUrlRef.current[deck] = trackingKey;
 
     if (!isStarted) await startAudio();
     
@@ -215,21 +298,26 @@ export default function App() {
     setLoadingState(prev => ({ ...prev, [deck]: true }));
 
     try {
-      let finalUrl = urlOrId;
-      if (isAudius) {
+      let resolvedStreamUrl = finalUrl;
+      if (isAudius && !savedId.startsWith('indexeddb:')) {
         setIsSearching(true);
-        finalUrl = await getAudiusStreamUrl(urlOrId);
+        resolvedStreamUrl = await getAudiusStreamUrl(finalUrl);
         setIsSearching(false);
       }
       
       // If a newer load request has been made on this deck, ignore this old load request
-      if (activeLoadingUrlRef.current[deck] !== urlOrId) {
+      if (activeLoadingUrlRef.current[deck] !== trackingKey) {
         return;
       }
       
-      if (!finalUrl) throw new Error("Could not resolve stream URL");
+      if (!resolvedStreamUrl) throw new Error("Could not resolve stream URL");
 
-      await audioEngine.loadTrack(deck, finalUrl);
+      await audioEngine.loadTrack(deck, resolvedStreamUrl);
+      
+      // Check again if the load request was cancelled or overridden during the await!
+      if (activeLoadingUrlRef.current[deck] !== trackingKey) {
+        return;
+      }
       
       const computedDuration = audioEngine.getDeck(deck).buffer.duration || 180;
       
@@ -247,7 +335,7 @@ export default function App() {
       
       setTrackInfo(prev => ({ 
         ...prev, 
-        [deck]: { title: name, url: finalUrl, id: urlOrId, artist: isAudius ? 'Audius' : 'Local', duration: computedDuration } 
+        [deck]: { title: name, url: resolvedStreamUrl, id: savedId, artist: isAudius ? 'Audius' : (isLocalFile ? 'Local MP3' : 'Sample'), duration: computedDuration } 
       }));
 
       // Apply saved config if available
@@ -268,14 +356,14 @@ export default function App() {
 
       setTrackInfo(prev => ({
         ...prev,
-        [deck]: { title: name, url: finalUrl, id: urlOrId, artist: isAudius ? 'Audius' : 'Local', duration: computedDuration }
+        [deck]: { title: name, url: resolvedStreamUrl, id: savedId, artist: isAudius ? 'Audius' : (isLocalFile ? 'Local MP3' : 'Sample'), duration: computedDuration }
       }));
 
       // Add to history
       setHistory(prev => {
-        const item = { id: urlOrId, title: name, artist: isAudius ? 'Audius' : 'Local', url: finalUrl, addedAt: Date.now() };
+        const item = { id: savedId, title: name, artist: isAudius ? 'Audius' : (isLocalFile ? 'Local MP3' : 'Sample'), url: savedId, addedAt: Date.now() };
         // Keep last 50 tracks
-        const newHistory = [item, ...prev.filter(t => t.id !== urlOrId)].slice(0, 50);
+        const newHistory = [item, ...prev.filter(t => t.id !== savedId)].slice(0, 50);
         return newHistory;
       });
     } catch (e) {
@@ -290,6 +378,9 @@ export default function App() {
   };
 
   const handleEjectDeck = (deck: 'A' | 'B') => {
+    // Clear active loading tracking key so pending loads are rejected/ignored
+    activeLoadingUrlRef.current[deck] = null;
+
     // 1. Reset source back to AUDIO
     setDeckSources(prev => ({ ...prev, [deck]: 'AUDIO' }));
     setExternalUrls(prev => ({ ...prev, [deck]: null }));
@@ -327,6 +418,19 @@ export default function App() {
 
   const removeFromPlaylist = (id: string) => {
     setPlaylist(prev => prev.filter(t => t.id !== id));
+  };
+
+  const movePlaylistItem = (index: number, direction: 'up' | 'down') => {
+    setPlaylist(prev => {
+      const nextList = [...prev];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex >= 0 && targetIndex < nextList.length) {
+        const temp = nextList[index];
+        nextList[index] = nextList[targetIndex];
+        nextList[targetIndex] = temp;
+      }
+      return nextList;
+    });
   };
 
   const captureDeckConfig = (deck: 'A' | 'B') => {
@@ -403,11 +507,62 @@ export default function App() {
   };
 
   const handleEqChange = (deck: 'A' | 'B', band: 'low' | 'mid' | 'high', val: number) => {
-    audioEngine.setEQ(deck, band, val);
     setEqState(prev => ({
       ...prev,
       [deck]: { ...prev[deck], [band]: val }
     }));
+    // Only set audio engine EQ if not killed
+    if (!eqKillState[deck][band]) {
+      audioEngine.setEQ(deck, band, val);
+    }
+  };
+
+  const handleEqKillToggle = (deck: 'A' | 'B', band: 'low' | 'mid' | 'high') => {
+    setEqKillState(prev => {
+      const nextKill = !prev[deck][band];
+      const targetVal = nextKill ? -40 : eqState[deck][band];
+      audioEngine.setEQ(deck, band, targetVal);
+      return {
+        ...prev,
+        [deck]: { ...prev[deck], [band]: nextKill }
+      };
+    });
+  };
+
+  const handleBpmTap = (deck: 'A' | 'B') => {
+    const now = Date.now();
+    const timestamps = tapTimestamps.current[deck];
+    
+    // Reset tap list if more than 2 seconds since last tap
+    if (timestamps.length > 0 && now - timestamps[timestamps.length - 1] > 2000) {
+      timestamps.length = 0;
+    }
+    
+    timestamps.push(now);
+    
+    if (timestamps.length >= 2) {
+      const intervals = [];
+      for (let i = 1; i < timestamps.length; i++) {
+        intervals.push(timestamps[i] - timestamps[i - 1]);
+      }
+      const avgInterval = intervals.reduce((sum, v) => sum + v, 0) / intervals.length;
+      const bpm = 60000 / avgInterval;
+      setDeckBaseBpm(prev => ({
+        ...prev,
+        [deck]: Math.round(bpm * 10) / 10
+      }));
+    } else {
+      setDeckBaseBpm(prev => ({
+        ...prev,
+        [deck]: 128
+      }));
+    }
+  };
+
+  const handleSlipToggle = (deck: 'A' | 'B') => {
+    const nextSlip = !slipModeState[deck];
+    setSlipModeState(prev => ({ ...prev, [deck]: nextSlip }));
+    audioEngine.setSlipMode(deck, nextSlip);
   };
 
   const handleGainChange = (deck: 'A' | 'B', val: number) => {
@@ -505,21 +660,20 @@ export default function App() {
     const deckGain = gainState[deck];
     
     let cfFactor = 1;
-    let fadeVal = crossfade;
+    const fadeVal = crossfade;
     
-    if (xfaderCurve > 0.8) {
-      // Hard cut / Battle curve logic
-      if (deck === 'A') {
-        cfFactor = fadeVal >= 0.99 ? 0 : 1;
-      } else {
-        cfFactor = fadeVal <= 0.01 ? 0 : 1;
-      }
+    if (xfaderCurve <= 0.3) {
+      // 1. Linear Crossfader Curve
+      cfFactor = deck === 'A' ? (1 - fadeVal) : fadeVal;
+    } else if (xfaderCurve <= 0.7) {
+      // 2. Constant Power / Equal Gain Curve
+      cfFactor = deck === 'A' ? Math.cos(fadeVal * Math.PI / 2) : Math.sin(fadeVal * Math.PI / 2);
     } else {
-      // Equal Gain / Constant Power blend
+      // 3. Scratch / Battle Cut Curve
       if (deck === 'A') {
-        cfFactor = fadeVal <= 0.5 ? 1 : Math.max(0, Math.min(1, (1 - fadeVal) * 2));
+        cfFactor = fadeVal < 0.9 ? 1.0 : Math.max(0, Math.min(1, (1 - fadeVal) * 10));
       } else {
-        cfFactor = fadeVal >= 0.5 ? 1 : Math.max(0, Math.min(1, fadeVal * 2));
+        cfFactor = fadeVal > 0.1 ? 1.0 : Math.max(0, Math.min(1, fadeVal * 10));
       }
     }
     
@@ -573,6 +727,12 @@ export default function App() {
     audioEngine.setCrossfaderCurve(0.5);
     setCrossfade(0.5);
     setXfaderCurve(0.5);
+
+    // 6. Reset EQ Kills
+    setEqKillState({
+      A: { low: false, mid: false, high: false },
+      B: { low: false, mid: false, high: false },
+    });
   };
 
   const handleRewind = (deck: 'A' | 'B') => {
@@ -651,6 +811,9 @@ export default function App() {
     try {
       wasPlayingBeforeScratch.current[deck] = playingState[deck];
       if (playingState[deck]) {
+        if (slipModeState[deck]) {
+          audioEngine.startSlip(deck);
+        }
         audioEngine.setPlaybackState(deck, false);
       }
     } catch (e) {
@@ -665,6 +828,9 @@ export default function App() {
       audioEngine.endScratch(deck, reverseStates[deck]);
       
       if (wasPlayingBeforeScratch.current[deck]) {
+        if (slipModeState[deck]) {
+          audioEngine.resolveSlip(deck);
+        }
         audioEngine.setPlaybackState(deck, true);
       } else {
         audioEngine.setPlaybackState(deck, false);
@@ -1141,7 +1307,10 @@ export default function App() {
     e.target.value = '';
   };
 
-  const triggerSample = (name: string) => {
+  const triggerSample = async (name: string) => {
+    if (!isStarted) {
+      await startAudio();
+    }
     audioEngine.triggerSample(name);
   };
 
@@ -1247,7 +1416,43 @@ export default function App() {
       {/* WAVEFORM GLOBAL VIEW */}
       <section className="h-24 lg:h-32 bg-black/40 grid grid-cols-2 gap-0.5 p-0.5 border-b border-white/5 flex-shrink-0">
         {(['A', 'B'] as const).map(deck => (
-          <div key={deck} className="relative h-full bg-[#0D0D12] overflow-hidden rounded border border-white/5 group">
+          <div 
+            key={deck} 
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDraggingWaveform(prev => ({ ...prev, [deck]: true }));
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDraggingWaveform(prev => ({ ...prev, [deck]: false }));
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDraggingWaveform(prev => ({ ...prev, [deck]: false }));
+              const file = e.dataTransfer.files?.[0];
+              if (file) {
+                loadTrack(deck, file.name, file);
+              }
+            }}
+            className="relative h-full bg-[#0D0D12] overflow-hidden rounded border border-white/5 group"
+          >
+            {/* Visual drag overlay for waveform cards */}
+            {draggingWaveform[deck] && (
+              <div className={`absolute inset-0 z-50 backdrop-blur-md flex flex-col items-center justify-center border-2 border-dashed p-2 text-center transition-all ${
+                deck === 'A' 
+                  ? 'bg-blue-950/80 border-blue-400 text-blue-300' 
+                  : 'bg-purple-950/80 border-purple-400 text-purple-300'
+              }`}>
+                <Upload className="w-6 h-6 mb-1 animate-bounce" size={24} />
+                <p className="text-[10px] font-black uppercase tracking-widest">
+                  DROP TO LOAD DECK {deck}
+                </p>
+              </div>
+            )}
+
             {/* Background FFT */}
             <div className="absolute inset-0 z-0">
                <Visualizer deck={deck} color={deck === 'A' ? "#3b82f6" : "#a855f7"} isPlaying={playingState[deck]} sourceType={deckSources[deck]} />
@@ -1296,11 +1501,21 @@ export default function App() {
 
             {loadingState[deck] && deckSources[deck] !== 'EXTERNAL' && (
               <div className="absolute inset-0 z-30 bg-[#070709]/85 backdrop-blur-[3px] flex flex-col items-center justify-center border border-white/5">
-                <div className="flex flex-col items-center gap-2">
+                <div className="flex flex-col items-center gap-3">
                   <div className={`w-5 h-5 border-2 border-t-transparent animate-spin rounded-full ${deck === 'A' ? 'border-blue-400' : 'border-purple-400'}`} />
                   <span className={`text-[8px] uppercase font-black tracking-widest font-mono select-none ${deck === 'A' ? 'text-blue-400' : 'text-purple-400'}`}>
                     ANALYZING & BUFFERING WAVEFORM...
                   </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEjectDeck(deck);
+                    }}
+                    className="mt-1 px-2.5 py-1 rounded bg-red-950/50 hover:bg-red-500 hover:text-white border border-red-500/20 text-[7.5px] font-black uppercase tracking-widest transition-all cursor-pointer shadow-[0_2px_8px_rgba(239,68,68,0.2)] active:scale-95"
+                    title="Cancel loading and purge buffer"
+                  >
+                    CANCEL / PURGE
+                  </button>
                 </div>
               </div>
             )}
@@ -1323,12 +1538,15 @@ export default function App() {
             ))}
         </div>
 
-        <div className="h-full w-full hardware-surface grid md:grid-cols-[1fr_220px_1fr] px-2 md:px-4 py-1 md:py-2 gap-2 md:gap-4 relative">
+        <div className="h-full w-full hardware-surface grid md:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)] px-2 md:px-4 py-1 md:py-2 gap-2 md:gap-4 relative">
           {/* Deck A */}
           <div className={`${viewMode === 'A' ? 'flex' : 'hidden'} md:flex h-full`}>
                 <Deck 
                   id="A" 
                   trackUrl={trackInfo.A.url} 
+                  trackTitle={trackInfo.A.title || 'READY'}
+                  trackArtist={trackInfo.A.artist}
+                  onFileDrop={(file) => loadTrack('A', file.name, file)}
                   isPlaying={playingState.A} 
                   isLoading={loadingState.A}
                   onPlayerReady={() => setLoadingState(prev => ({ ...prev, A: false }))}
@@ -1372,6 +1590,21 @@ export default function App() {
                   onScratchEnd={() => handleScratchEnd('A')}
                   onEject={() => handleEjectDeck('A')}
                   onSkip={(sec) => handleSkip('A', sec)}
+                  baseBpm={deckBaseBpm.A}
+                  onBpmTap={() => handleBpmTap('A')}
+                  isSlipActive={slipModeState.A}
+                  onSlipToggle={() => handleSlipToggle('A')}
+                  isFavorite={favorites.some(f => f.id === trackInfo.A.id)}
+                  onToggleFavorite={() => {
+                    if (trackInfo.A.id) {
+                      toggleFavorite({
+                        id: trackInfo.A.id,
+                        title: trackInfo.A.title || 'Unknown Title',
+                        artist: trackInfo.A.artist || 'Local MP3',
+                        url: trackInfo.A.url || ''
+                      });
+                    }
+                  }}
                 />
           </div>
 
@@ -1381,6 +1614,9 @@ export default function App() {
               eqA={eqState.A}
               eqB={eqState.B}
               onEqChange={handleEqChange}
+              eqKillA={eqKillState.A}
+              eqKillB={eqKillState.B}
+              onEqKillToggle={handleEqKillToggle}
               filterA={filterState.A}
               filterB={filterState.B}
               onFilterChange={handleFilterChange}
@@ -1401,6 +1637,9 @@ export default function App() {
               <Deck 
                 id="B" 
                 trackUrl={trackInfo.B.url} 
+                trackTitle={trackInfo.B.title || 'READY'}
+                trackArtist={trackInfo.B.artist}
+                onFileDrop={(file) => loadTrack('B', file.name, file)}
                 isPlaying={playingState.B} 
                 isLoading={loadingState.B}
                 onPlayerReady={() => setLoadingState(prev => ({ ...prev, B: false }))}
@@ -1444,6 +1683,21 @@ export default function App() {
                 onScratchEnd={() => handleScratchEnd('B')}
                 onEject={() => handleEjectDeck('B')}
                 onSkip={(sec) => handleSkip('B', sec)}
+                baseBpm={deckBaseBpm.B}
+                onBpmTap={() => handleBpmTap('B')}
+                isSlipActive={slipModeState.B}
+                onSlipToggle={() => handleSlipToggle('B')}
+                isFavorite={favorites.some(f => f.id === trackInfo.B.id)}
+                onToggleFavorite={() => {
+                  if (trackInfo.B.id) {
+                    toggleFavorite({
+                      id: trackInfo.B.id,
+                      title: trackInfo.B.title || 'Unknown Title',
+                      artist: trackInfo.B.artist || 'Local MP3',
+                      url: trackInfo.B.url || ''
+                    });
+                  }
+                }}
               />
           </div>
         </div>
@@ -1520,6 +1774,12 @@ export default function App() {
               className={`text-[11px] px-3 py-2 rounded cursor-pointer transition-all flex items-center gap-2 ${activeLibraryTab === 'SPOTIFY' ? 'text-green-500 bg-green-500/10 font-bold border border-green-500/20' : 'text-white/40 hover:text-white/60 hover:bg-white/5'}`}>
                 <Music size={12} /> SPOTIFY
             </div>
+
+            <div 
+              onClick={() => setActiveLibraryTab('OFFLINE_CRATE')}
+              className={`text-[11px] px-3 py-2 rounded cursor-pointer transition-all flex items-center gap-2 ${activeLibraryTab === 'OFFLINE_CRATE' ? 'text-teal-400 bg-teal-500/10 font-bold border border-teal-500/20 shadow-[0_0_10px_rgba(20,184,166,0.15)]' : 'text-white/40 hover:text-white/60 hover:bg-white/5'}`}>
+                <Database size={12} /> OFFLINE CRATE ({cachedTrackIds.length})
+            </div>
             
             <div className="h-[1px] bg-white/5 my-2" />
             
@@ -1548,10 +1808,10 @@ export default function App() {
             })}
           </div>
           <label className="mt-auto px-3 py-2 border border-dashed border-white/10 rounded text-[9px] font-mono text-center opacity-40 hover:opacity-100 cursor-pointer transition-all">
-            LOAD FILE
+            LOAD FILE (DECK A)
             <input type="file" className="hidden" accept="audio/*" onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) loadTrack('A', file.name, URL.createObjectURL(file));
+                if (file) loadTrack('A', file.name, file);
             }} />
           </label>
         </div>
@@ -1671,11 +1931,28 @@ export default function App() {
                                 <td className="px-3 py-2 text-white/40">{track.artist}</td>
                                 <td className="px-3 py-2">
                                     <div className="flex gap-2">
-                                        <button onClick={() => removeFromPlaylist(track.id)} className="p-1.5 rounded bg-purple-500/10 text-purple-500 hover:bg-purple-500/20 transition-colors" title="Remove from Playlist"><Trash2 size={12} /></button>
-                                        <button onClick={() => toggleFavorite(track)} className={`p-1.5 rounded transition-colors ${favorites.find(f => f.id === track.id) ? 'bg-rose-500/20 text-rose-500' : 'bg-white/5 text-white/40 hover:bg-white/10'}`} title="Toggle Favorite"><Heart size={12} fill={favorites.find(f => f.id === track.id) ? 'currentColor' : 'none'} /></button>
-                                        <div className="w-[1px] bg-white/10 mx-1" />
-                                        <button onClick={() => loadTrack('A', track.title, track.id, track.isAudius, track.config)} className="px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[9px] font-bold hover:bg-blue-600/40">LOAD A</button>
-                                        <button onClick={() => loadTrack('B', track.title, track.id, track.isAudius, track.config)} className="px-2 py-0.5 rounded bg-purple-600/20 text-purple-400 border border-purple-500/30 text-[9px] font-bold hover:bg-purple-600/40">LOAD B</button>
+                                        <button 
+                                          disabled={idx === 0} 
+                                          onClick={() => movePlaylistItem(idx, 'up')} 
+                                          className="p-1.5 rounded bg-white/5 text-white/40 hover:bg-white/10 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors cursor-pointer" 
+                                          title="Move Up"
+                                        >
+                                          <ChevronUp size={12} />
+                                        </button>
+                                        <button 
+                                          disabled={idx === playlist.length - 1} 
+                                          onClick={() => movePlaylistItem(idx, 'down')} 
+                                          className="p-1.5 rounded bg-white/5 text-white/40 hover:bg-white/10 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors cursor-pointer" 
+                                          title="Move Down"
+                                        >
+                                          <ChevronDown size={12} />
+                                        </button>
+                                        <div className="w-[1px] bg-white/10 mx-0.5" />
+                                        <button onClick={() => removeFromPlaylist(track.id)} className="p-1.5 rounded bg-purple-500/10 text-purple-500 hover:bg-purple-500/20 transition-colors cursor-pointer" title="Remove from Playlist"><Trash2 size={12} /></button>
+                                        <button onClick={() => toggleFavorite(track)} className={`p-1.5 rounded transition-colors cursor-pointer ${favorites.find(f => f.id === track.id) ? 'bg-rose-500/20 text-rose-500' : 'bg-white/5 text-white/40 hover:bg-white/10'}`} title="Toggle Favorite"><Heart size={12} fill={favorites.find(f => f.id === track.id) ? 'currentColor' : 'none'} /></button>
+                                        <div className="w-[1px] bg-white/10 mx-0.5" />
+                                        <button onClick={() => loadTrack('A', track.title, track.id, track.isAudius, track.config)} className="px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[9px] font-bold hover:bg-blue-600/40 cursor-pointer">LOAD A</button>
+                                        <button onClick={() => loadTrack('B', track.title, track.id, track.isAudius, track.config)} className="px-2 py-0.5 rounded bg-purple-600/20 text-purple-400 border border-purple-500/30 text-[9px] font-bold hover:bg-purple-600/40 cursor-pointer">LOAD B</button>
                                     </div>
                                 </td>
                                 <td className="px-3 py-2 font-mono text-white/20 hidden sm:table-cell">
@@ -1692,6 +1969,154 @@ export default function App() {
                     </tbody>
                 </table>
             )}
+
+            {activeLibraryTab === 'OFFLINE_CRATE' && (
+                <div className="space-y-4 w-full">
+                    {/* Offline Import Area */}
+                    <div className="p-4 rounded-lg bg-teal-500/[0.02] border border-teal-500/10 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div className="text-left">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-teal-400">Offline Crate Storage</h4>
+                            <p className="text-[10px] text-white/40 leading-relaxed max-w-xl">
+                                Import and cache custom audio files (MP3, WAV, FLAC, OGG, etc.) directly in your browser's persistent IndexedDB cache database. These tracks remain available offline.
+                            </p>
+                        </div>
+                        <div className="flex-shrink-0">
+                            <input 
+                              type="file" 
+                              id="offline-crate-upload-input" 
+                              accept="audio/*" 
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const fileId = 'local_' + file.name.replace(/[^a-zA-Z0-9]/g, '_') + '_' + file.size;
+                                  try {
+                                    await indexedDbCache.saveTrack(fileId, file.name, file.size, file.type, file);
+                                    await refreshOfflineCrate();
+                                  } catch (err: any) {
+                                    alert("Failed to cache audio file: " + err.message);
+                                  }
+                                }
+                              }} 
+                              className="hidden"
+                            />
+                            <button
+                              onClick={() => document.getElementById('offline-crate-upload-input')?.click()}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-[9px] rounded bg-teal-500/15 border border-teal-500/30 text-teal-400 hover:bg-teal-500/25 active:scale-95 transition-all font-bold cursor-pointer font-sans"
+                            >
+                              <Plus size={11} /> ADD TRACK TO CRATE
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Offline Tracks list */}
+                    <table className="w-full text-left border-separate border-spacing-y-1">
+                        <thead>
+                            <tr className="text-[9px] uppercase tracking-widest text-white/20">
+                                <th className="px-3 pb-2 font-black">Track Name</th>
+                                <th className="px-3 pb-2 font-black">Size</th>
+                                <th className="px-3 pb-2 font-black">Actions / Load</th>
+                            </tr>
+                        </thead>
+                        <tbody className="text-[11px]">
+                            {cachedTracksMeta.length > 0 ? cachedTracksMeta.map((track) => {
+                                const trackFullId = 'indexeddb:' + track.id;
+                                const isFav = favorites.some(f => f.id === trackFullId);
+                                const isInPlaylist = playlist.some(p => p.id === trackFullId);
+                                return (
+                                    <tr key={track.id} className="group bg-white/[0.01] hover:bg-white/[0.03] transition-all text-white/70">
+                                        <td className="px-3 py-2 font-medium truncate max-w-[280px]" title={track.name}>
+                                          {track.name}
+                                        </td>
+                                        <td className="px-3 py-2 text-white/40 font-mono text-[10px]">
+                                          {(track.size / (1024 * 1024)).toFixed(1)} MB
+                                        </td>
+                                        <td className="px-3 py-2">
+                                            <div className="flex gap-1.5 items-center">
+                                                {/* Favorite Button */}
+                                                <button 
+                                                  onClick={() => toggleFavorite({ 
+                                                    id: trackFullId, 
+                                                    title: track.name, 
+                                                    artist: 'Local MP3', 
+                                                    url: trackFullId 
+                                                  })} 
+                                                  className={`p-1.5 rounded transition-colors cursor-pointer ${
+                                                    isFav ? 'bg-rose-500/20 text-rose-500' : 'bg-white/5 text-white/40 hover:bg-white/10'
+                                                  }`}
+                                                  title="Toggle Favorite"
+                                                >
+                                                  <Heart size={12} fill={isFav ? 'currentColor' : 'none'} />
+                                                </button>
+
+                                                {/* Add to Playlist Button */}
+                                                <button 
+                                                  onClick={() => addToPlaylist({ 
+                                                    id: trackFullId, 
+                                                    title: track.name, 
+                                                    artist: 'Local MP3', 
+                                                    url: trackFullId 
+                                                  })} 
+                                                  className={`p-1.5 rounded transition-colors cursor-pointer ${
+                                                    isInPlaylist ? 'bg-purple-500/20 text-purple-500' : 'bg-white/5 text-white/40 hover:bg-white/10'
+                                                  }`}
+                                                  title="Add to Playlist"
+                                                >
+                                                  <ListPlus size={12} />
+                                                </button>
+
+                                                {/* Delete Button */}
+                                                <button 
+                                                  onClick={async () => {
+                                                    if (window.confirm(`Delete ${track.name} from offline cache?`)) {
+                                                      try {
+                                                        await indexedDbCache.deleteTrack(track.id);
+                                                        await refreshOfflineCrate();
+                                                      } catch (err: any) {
+                                                        alert("Failed to delete track: " + err.message);
+                                                      }
+                                                    }
+                                                  }} 
+                                                  className="p-1.5 rounded bg-white/5 text-white/40 hover:bg-red-500/20 hover:text-red-400 transition-colors cursor-pointer"
+                                                  title="Delete from cache"
+                                                >
+                                                  <Trash2 size={12} />
+                                                </button>
+
+                                                <div className="w-[1px] bg-white/10 mx-1" />
+
+                                                {/* Load Deck A */}
+                                                <button 
+                                                  onClick={() => loadTrack('A', track.name, trackFullId)} 
+                                                  className="px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[9px] font-bold hover:bg-blue-600/40 active:scale-95 transition-all cursor-pointer"
+                                                  title="Load to Deck A"
+                                                >
+                                                  {loadingState.A && trackInfo.A.id === trackFullId ? '...' : 'LOAD A'}
+                                                </button>
+
+                                                {/* Load Deck B */}
+                                                <button 
+                                                  onClick={() => loadTrack('B', track.name, trackFullId)} 
+                                                  className="px-2 py-0.5 rounded bg-purple-600/20 text-purple-400 border border-purple-500/30 text-[9px] font-bold hover:bg-purple-600/40 active:scale-95 transition-all cursor-pointer"
+                                                  title="Load to Deck B"
+                                                >
+                                                  {loadingState.B && trackInfo.B.id === trackFullId ? '...' : 'LOAD B'}
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            }) : (
+                                <tr>
+                                    <td colSpan={3} className="py-12 text-center text-white/20 italic font-mono text-[10px]">
+                                        No tracks stored in your offline crate. Click "ADD TRACK TO CRATE" above to save music for offline sessions.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
             {activeLibraryTab === 'CRATES' && (
                 <table className="w-full text-left border-separate border-spacing-y-1">
                     <thead>
