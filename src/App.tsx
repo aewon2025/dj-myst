@@ -13,6 +13,7 @@ import Mixer from './components/Mixer';
 import Waveform from './components/Waveform';
 import Visualizer from './components/Visualizer';
 import OpManualReader from './components/OpManualReader';
+import AudioDebugger from './components/AudioDebugger';
 import { AudiusTrack, searchAudius, getAudiusStreamUrl } from './services/audius';
 
 interface TrackConfig {
@@ -204,7 +205,7 @@ export default function App() {
     let savedId = '';
     let isLocalFile = false;
 
-    if (typeof urlOrId !== 'string' || urlOrId instanceof File) {
+    if (typeof urlOrId !== 'string') {
       // It's a binary file uploaded directly in the current browser session
       const file = urlOrId as File;
       trackingKey = file.name + '_' + file.size;
@@ -2473,6 +2474,14 @@ export default function App() {
             )}
         </div>
       </footer>
+      <AudioDebugger 
+        playbackRates={playbackRates}
+        playingState={playingState}
+        fxState={fxState}
+        eqState={eqState}
+        trackInfo={trackInfo}
+        filterState={filterState}
+      />
     </div>
   );
 }
